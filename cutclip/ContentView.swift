@@ -8,14 +8,23 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var binaryManager = BinaryManager()
+    @StateObject private var errorHandler = ErrorHandler()
+    @AppStorage("disclaimerAccepted") private var disclaimerAccepted = false
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            if !disclaimerAccepted {
+                DisclaimerView()
+            } else if !binaryManager.isConfigured {
+                AutoSetupView(binaryManager: binaryManager)
+            } else {
+                ClipperView()
+                    .environmentObject(binaryManager)
+                    .environmentObject(errorHandler)
+            }
         }
-        .padding()
+        .errorAlert(errorHandler)
     }
 }
 

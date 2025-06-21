@@ -193,6 +193,8 @@ enum ClipError: LocalizedError {
     case outputFileNotFound
     case invalidTimeFormat
     case endTimeBeforeStartTime
+    case diskSpaceError(String)
+    case fileSystemError(String)
     
     var errorDescription: String? {
         switch self {
@@ -208,6 +210,31 @@ enum ClipError: LocalizedError {
             return "Invalid time format. Use HH:MM:SS"
         case .endTimeBeforeStartTime:
             return "End time must be after start time"
+        case .diskSpaceError(let message):
+            return "Disk space error: \(message)"
+        case .fileSystemError(let message):
+            return "File system error: \(message)"
+        }
+    }
+    
+    func toAppError() -> AppError {
+        switch self {
+        case .binaryNotFound(let message):
+            return .binaryNotFound(message)
+        case .clippingFailed(let message):
+            return .clippingFailed(message)
+        case .processError(let message):
+            return .clippingFailed(message)
+        case .outputFileNotFound:
+            return .fileSystem("Output file was not created")
+        case .invalidTimeFormat:
+            return .invalidInput("Invalid time format. Use HH:MM:SS")
+        case .endTimeBeforeStartTime:
+            return .invalidInput("End time must be after start time")
+        case .diskSpaceError(let message):
+            return .diskSpace(message)
+        case .fileSystemError(let message):
+            return .fileSystem(message)
         }
     }
 }

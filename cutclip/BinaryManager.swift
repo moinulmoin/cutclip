@@ -38,8 +38,10 @@ class BinaryManager: ObservableObject {
     }
     
     func checkBinaries() {
-        let ytDlpFile = appSupportDirectory.appendingPathComponent("yt-dlp")
-        let ffmpegFile = appSupportDirectory.appendingPathComponent("ffmpeg")
+        // Check in bin subdirectory (auto-downloaded location)
+        let binDirectory = appSupportDirectory.appendingPathComponent("bin")
+        let ytDlpFile = binDirectory.appendingPathComponent("yt-dlp")
+        let ffmpegFile = binDirectory.appendingPathComponent("ffmpeg")
         
         if FileManager.default.fileExists(atPath: ytDlpFile.path) {
             ytDlpPath = ytDlpFile.path

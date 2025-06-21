@@ -45,7 +45,6 @@ class DownloadService: ObservableObject {
                 "--format", "best[height<=720]", // Limit to 720p for faster downloads
                 "--output", outputTemplate,
                 "--no-playlist",
-                "--extract-flat", "false",
                 job.url
             ]
             
@@ -151,6 +150,8 @@ enum DownloadError: LocalizedError {
     case downloadFailed(String)
     case processError(String)
     case fileNotFound
+    case networkError(String)
+    case diskSpaceError(String)
     
     var errorDescription: String? {
         switch self {
@@ -164,6 +165,29 @@ enum DownloadError: LocalizedError {
             return "Process error: \(message)"
         case .fileNotFound:
             return "Downloaded file not found"
+        case .networkError(let message):
+            return "Network error: \(message)"
+        case .diskSpaceError(let message):
+            return "Disk space error: \(message)"
+        }
+    }
+    
+    func toAppError() -> AppError {
+        switch self {
+        case .binaryNotFound(let message):
+            return .binaryNotFound(message)
+        case .invalidURL:
+            return .invalidInput("Invalid YouTube URL format")
+        case .downloadFailed(let message):
+            return .downloadFailed(message)
+        case .processError(let message):
+            return .downloadFailed(message)
+        case .fileNotFound:
+            return .fileSystem("Downloaded file not found")
+        case .networkError(let message):
+            return .network(message)
+        case .diskSpaceError(let message):
+            return .diskSpace(message)
         }
     }
 }

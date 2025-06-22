@@ -121,24 +121,45 @@ enum AppError: LocalizedError, Equatable, Sendable {
     case fileSystem(String)
     case unknown(String)
     
+    var errorTitle: String {
+        switch self {
+        case .network:
+            return "Connection Issue"
+        case .diskSpace:
+            return "Storage Full"
+        case .invalidInput:
+            return "Invalid Input"
+        case .binaryNotFound:
+            return "Setup Required"
+        case .downloadFailed:
+            return "Download Failed"
+        case .clippingFailed:
+            return "Processing Failed"
+        case .fileSystem:
+            return "File Access Error"
+        case .unknown:
+            return "Something Went Wrong"
+        }
+    }
+    
     var errorDescription: String? {
         switch self {
         case .network(let message):
-            return "Network Error: \(message)"
+            return message
         case .diskSpace(let message):
-            return "Disk Space Error: \(message)"
+            return message
         case .invalidInput(let message):
-            return "Invalid Input: \(message)"
+            return message
         case .binaryNotFound(let message):
-            return "Binary Not Found: \(message)"
+            return message
         case .downloadFailed(let message):
-            return "Download Failed: \(message)"
+            return message
         case .clippingFailed(let message):
-            return "Clipping Failed: \(message)"
+            return message
         case .fileSystem(let message):
-            return "File System Error: \(message)"
+            return message
         case .unknown(let message):
-            return "Unknown Error: \(message)"
+            return message
         }
     }
     
@@ -179,25 +200,30 @@ struct ErrorAlertView: ViewModifier {
     
     func body(content: Content) -> some View {
         content
-            .alert("Error", isPresented: $errorHandler.showingAlert) {
-                Button("OK") {
+            .alert(
+                errorHandler.currentError?.errorTitle ?? "Error",
+                isPresented: $errorHandler.showingAlert,
+                presenting: errorHandler.currentError
+            ) { error in
+                Button("Dismiss", role: .cancel) {
                     errorHandler.clearError()
                 }
-                if errorHandler.currentError?.isRetryable == true {
+                
+                if error.isRetryable {
                     Button("Retry") {
                         errorHandler.clearError()
                         // Retry logic would be handled by the calling view
                     }
                 }
-            } message: {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let error = errorHandler.currentError {
-                        Text(error.localizedDescription)
-                        if let suggestion = error.recoverySuggestion {
-                            Text(suggestion)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+            } message: { error in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(error.errorDescription ?? "An unknown error occurred")
+                        .font(.callout)
+                    
+                    if let suggestion = error.recoverySuggestion {
+                        Text(suggestion)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

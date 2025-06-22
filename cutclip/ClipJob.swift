@@ -7,19 +7,31 @@
 
 import Foundation
 
-struct ClipJob {
+struct ClipJob: Sendable {
     let id = UUID()
     let url: String
     let startTime: String
     let endTime: String
     let aspectRatio: AspectRatio
-    var status: ClipStatus = .pending
-    var progress: Double = 0.0
-    var downloadedFilePath: String?
-    var outputFilePath: String?
-    var errorMessage: String?
+    let status: ClipStatus
+    let progress: Double
+    let downloadedFilePath: String?
+    let outputFilePath: String?
+    let errorMessage: String?
     
-    enum ClipStatus {
+    init(url: String, startTime: String, endTime: String, aspectRatio: AspectRatio, status: ClipStatus = .pending, progress: Double = 0.0, downloadedFilePath: String? = nil, outputFilePath: String? = nil, errorMessage: String? = nil) {
+        self.url = url
+        self.startTime = startTime
+        self.endTime = endTime
+        self.aspectRatio = aspectRatio
+        self.status = status
+        self.progress = progress
+        self.downloadedFilePath = downloadedFilePath
+        self.outputFilePath = outputFilePath
+        self.errorMessage = errorMessage
+    }
+    
+    enum ClipStatus: Sendable {
         case pending
         case downloading
         case downloaded
@@ -28,7 +40,7 @@ struct ClipJob {
         case failed
     }
     
-    enum AspectRatio: String, CaseIterable {
+    enum AspectRatio: String, CaseIterable, Sendable {
         case original = "Original"
         case sixteenNine = "16:9"
         case oneOne = "1:1"

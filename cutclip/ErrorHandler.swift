@@ -8,19 +8,18 @@
 import Foundation
 import SwiftUI
 
+@MainActor
 class ErrorHandler: ObservableObject {
     @Published var currentError: AppError?
     @Published var showingAlert = false
     
     func handle(_ error: Error) {
-        DispatchQueue.main.async {
-            if let appError = error as? AppError {
-                self.currentError = appError
-            } else {
-                self.currentError = AppError.unknown(error.localizedDescription)
-            }
-            self.showingAlert = true
+        if let appError = error as? AppError {
+            self.currentError = appError
+        } else {
+            self.currentError = AppError.unknown(error.localizedDescription)
         }
+        self.showingAlert = true
     }
     
     func clearError() {
@@ -29,7 +28,7 @@ class ErrorHandler: ObservableObject {
     }
     
     // System checks
-    static func checkDiskSpace(requiredMB: Int = 500) throws {
+    nonisolated static func checkDiskSpace(requiredMB: Int = 500) throws {
         guard let downloadsPath = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
             throw AppError.diskSpace("Cannot access Downloads directory")
         }
@@ -51,7 +50,7 @@ class ErrorHandler: ObservableObject {
         }
     }
     
-    static func checkNetworkConnectivity() async throws {
+    nonisolated static func checkNetworkConnectivity() async throws {
         let url = URL(string: "https://www.youtube.com")!
         let request = URLRequest(url: url, timeoutInterval: 10.0)
         
@@ -71,7 +70,7 @@ class ErrorHandler: ObservableObject {
         }
     }
     
-    static func validateTimeInputs(startTime: String, endTime: String) throws {
+    nonisolated static func validateTimeInputs(startTime: String, endTime: String) throws {
         // Validate format
         let timePattern = #"^\d{2}:\d{2}:\d{2}$"#
         let regex = try NSRegularExpression(pattern: timePattern)
@@ -105,14 +104,14 @@ class ErrorHandler: ObservableObject {
         }
     }
     
-    private static func timeToSeconds(_ timeString: String) -> Double {
+    nonisolated private static func timeToSeconds(_ timeString: String) -> Double {
         let components = timeString.split(separator: ":").compactMap { Double($0) }
         guard components.count == 3 else { return 0 }
         return components[0] * 3600 + components[1] * 60 + components[2]
     }
 }
 
-enum AppError: LocalizedError, Equatable {
+enum AppError: LocalizedError, Equatable, Sendable {
     case network(String)
     case diskSpace(String)
     case invalidInput(String)

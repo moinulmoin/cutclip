@@ -1,0 +1,28 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# CutClip Architecture
+
+## Overview
+macOS app (Swift 6.0, macOS 14.6+) for YouTube video clipping using external binaries (yt-dlp, ffmpeg).
+
+## Core Flow
+1. [ContentView.swift](mdc:cutclip/ContentView.swift) → Disclaimer → Binary Setup → Main App
+2. Device registration with backend API
+3. License validation (3 free credits → paid license)
+4. Video download (yt-dlp) → Clip (ffmpeg) → Save to Downloads
+
+## Key Services
+- [UsageTracker.swift](mdc:cutclip/UsageTracker.swift) - API communication & credit management
+- [LicenseManager.swift](mdc:cutclip/LicenseManager.swift) - License validation
+- [BinaryManager.swift](mdc:cutclip/BinaryManager.swift) - yt-dlp/ffmpeg management
+- [ClipService.swift](mdc:cutclip/ClipService.swift) - Video processing
+- [DownloadService.swift](mdc:cutclip/DownloadService.swift) - YouTube downloading
+
+## API Integration
+Backend at `https://appdomain.com/api` - see [USER_API_DOCS.md](mdc:USER_API_DOCS.md)
+- Device-based registration
+- Credit system for free users
+- License activation creates user account

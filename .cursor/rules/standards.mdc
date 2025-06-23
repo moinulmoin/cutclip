@@ -1,0 +1,33 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Coding Standards
+
+## Structure
+- Services: Singleton pattern with `@MainActor`
+- Views: `@StateObject` for services, `@AppStorage` for settings
+- Errors: Domain-specific enums with `toAppError()` conversion
+- Models: Structs conforming to `Sendable`
+
+## Best Practices
+- NO sensitive data in logs (license keys, etc.)
+- Process output → stderr for progress tracking
+- Cleanup temporary files after operations
+- Graceful API degradation when offline
+- Input validation before processing (time format: HH:MM:SS)
+
+## API Patterns
+```swift
+func apiCall() async throws -> Response {
+    guard let deviceId = DeviceIdentifier.shared.getDeviceIdentifier() else {
+        throw UsageError.noDeviceId
+    }
+    isLoading = true
+    defer { isLoading = false }
+
+    let (data, response) = try await URLSession.shared.data(from: url)
+    // Handle response...
+}
+```

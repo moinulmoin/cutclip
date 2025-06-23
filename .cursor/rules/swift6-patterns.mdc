@@ -1,0 +1,34 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Swift 6 Patterns
+
+## Concurrency Model
+```swift
+@MainActor
+class Service: ObservableObject {
+    nonisolated(unsafe) static let shared = Service()
+    @Published var state = State()
+
+    nonisolated func backgroundWork() async throws {
+        let result = await processData()
+        await MainActor.run {
+            self.state = result
+        }
+    }
+}
+```
+
+## Key Patterns
+- **@MainActor** on all UI classes
+- **nonisolated** for background operations
+- **Sendable** on all data types crossing actor boundaries
+- **withCheckedThrowingContinuation** for Process execution
+- Errors conform to both **LocalizedError** and **Sendable**
+
+## Data Flow
+- Device ID: Hardware UUID → SHA256 → Keychain cache
+- License: API → Keychain storage → Local validation
+- Binaries: Auto-download → ~/Library/Application Support/CutClip/bin/

@@ -55,8 +55,6 @@ class DeviceRegistrationService: ObservableObject {
                 "registered_at": ISO8601DateFormatter().string(from: Date()),
                 "remaining_uses": response.remainingUses,
                 "requires_license": response.requiresLicense,
-                "registration_token": response.registrationToken ?? "",
-                "user_status": response.userStatus,
                 "api_response": response.toDict()
             ]
 
@@ -78,7 +76,7 @@ class DeviceRegistrationService: ObservableObject {
 
     // MARK: - User Management
 
-    private func checkUserExists(deviceId: String) async throws -> UserCheckResponse {
+    private func callCheckDeviceAPI(deviceId: String) async throws -> [String: Any] {
         let url = URL(string: "\(baseURL)/users/check-device?deviceId=\(deviceId)")!
 
         var request = URLRequest(url: url)
@@ -96,33 +94,34 @@ class DeviceRegistrationService: ObservableObject {
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let success = json?["success"] as? Bool ?? false
-        let deviceData = json?["data"] as? [String: Any]
+        return json ?? [:]
+    }
+
+    private func checkUserExists(deviceId: String) async throws -> UserCheckResponse {
+        let json = try await callCheckDeviceAPI(deviceId: deviceId)
+        let success = json["success"] as? Bool ?? false
+        let deviceData = json["data"] as? [String: Any]
         let userData = deviceData?["user"] as? [String: Any]
 
         return UserCheckResponse(
             exists: success && deviceData != nil,
             userId: userData?["id"] as? String,
             remainingUses: deviceData?["freeCredits"] as? Int ?? 0,
-            totalUsage: 0, // Not provided in API response
             hasLicense: userData?["license"] != nil,
-            licenseStatus: userData?["license"] != nil ? "active" : nil,
             quotaComplete: (deviceData?["freeCredits"] as? Int ?? 0) <= 0
         )
     }
 
     private func handleExistingUser(deviceId: String, userInfo: UserCheckResponse) async throws -> DeviceRegistrationResponse {
         // Check if user has license
-        if userInfo.hasLicense && userInfo.licenseStatus == "active" {
+        if userInfo.hasLicense {
             // User has valid license - allow usage
             return DeviceRegistrationResponse(
                 deviceId: deviceId,
                 registered: true,
                 remainingUses: -1, // Unlimited for licensed users
                 requiresLicense: false,
-                registrationToken: nil,
                 message: "License active - unlimited usage",
-                userStatus: "licensed"
             )
         }
 
@@ -134,9 +133,7 @@ class DeviceRegistrationService: ObservableObject {
                 registered: true,
                 remainingUses: 0,
                 requiresLicense: true,
-                registrationToken: nil,
                 message: "Free trial expired. License required to continue using CutClip.",
-                userStatus: "trial_expired"
             )
         }
 
@@ -146,9 +143,7 @@ class DeviceRegistrationService: ObservableObject {
             registered: true,
             remainingUses: userInfo.remainingUses,
             requiresLicense: false,
-            registrationToken: nil,
             message: "Free trial - \(userInfo.remainingUses) uses remaining",
-            userStatus: "trial_active"
         )
     }
 
@@ -184,17 +179,21 @@ class DeviceRegistrationService: ObservableObject {
         return DeviceRegistrationResponse(
             deviceId: deviceData?["deviceId"] as? String ?? deviceId,
             registered: json?["success"] as? Bool ?? false,
-            remainingUses: 100, // New devices get 100 free credits as per API docs
+            remainingUses: 3, // New devices get 3 free credits as per API docs
             requiresLicense: false,
-            registrationToken: nil,
             message: json?["message"] as? String ?? "Device created successfully",
-            userStatus: "trial_active"
         )
     }
 
         // MARK: - License Validation
 
     func validateLicense(_ licenseKey: String) async -> LicenseValidationResult {
+        // Check network first
+        NetworkMonitor.shared.requireNetwork()
+        guard NetworkMonitor.shared.isConnected else {
+            return .failure("Network connection required")
+        }
+
         isRegistering = true
         registrationError = nil
 
@@ -204,21 +203,27 @@ class DeviceRegistrationService: ObservableObject {
 
         do {
             let deviceID = DeviceIdentifier.shared.getDeviceID()
-            let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
 
+            // Pre-validate license BEFORE storing
             let response = try await callValidateLicenseAPI(
                 licenseKey: licenseKey,
-                deviceId: deviceID,
-                appVersion: appVersion
+                deviceId: deviceID
             )
 
             if response.valid {
-                // Store license
-                if SecureStorage.shared.storeLicense(licenseKey, deviceID: deviceID) {
-                    print("✅ License validated and stored")
-                    return .success(response)
+                // If validation successful, update device with license
+                let updateResponse = try await callUpdateDeviceAPI(deviceId: deviceID, licenseKey: licenseKey)
+
+                if updateResponse.success {
+                    // Only store after successful API update
+                    if SecureStorage.shared.storeLicense(licenseKey, deviceID: deviceID) {
+                        print("✅ License validated, updated on server, and stored locally")
+                        return .success(response)
+                    } else {
+                        return .failure("Failed to store license locally")
+                    }
                 } else {
-                    return .failure("Failed to store license")
+                    return .failure("Failed to update device with license: \(updateResponse.message)")
                 }
             } else {
                 return .failure(response.errorMessage ?? "Invalid license")
@@ -231,6 +236,19 @@ class DeviceRegistrationService: ObservableObject {
         }
     }
 
+    // MARK: - Periodic License Validation
+
+    func validateStoredLicense() async {
+        guard let storedLicense = SecureStorage.shared.retrieveLicense() else { return }
+        let result = await validateLicense(storedLicense.key)
+        switch result {
+        case .failure(_):
+            let _ = SecureStorage.shared.deleteLicense()
+            print("❌ Stored license is no longer valid, removed from storage")
+        case .success(_):
+            print("✅ Stored license is still valid")
+        }
+    }
     // MARK: - Usage Tracking
 
     func recordUsage() async -> UsageResult {
@@ -273,7 +291,6 @@ class DeviceRegistrationService: ObservableObject {
 
         return UsageResponse(
             remainingUses: deviceData?["freeCredits"] as? Int ?? 0,
-            totalUsage: 0, // Not provided in this API response
             requiresLicense: (deviceData?["freeCredits"] as? Int ?? 0) <= 0,
             message: json?["message"] as? String ?? ""
         )
@@ -292,18 +309,58 @@ class DeviceRegistrationService: ObservableObject {
         }
     }
 
-    // MARK: - Legacy Methods (for backward compatibility)
 
-    func registerDevice() async -> DeviceRegistrationResult {
-        return await registerDeviceAndCheckLicense()
-    }
+
 }
 
 // MARK: - HTTP API Calls
 
 extension DeviceRegistrationService {
 
-    private func callValidateLicenseAPI(licenseKey: String, deviceId: String, appVersion: String) async throws -> LicenseValidationResponse {
+    func callValidateLicenseAPI(licenseKey: String, deviceId: String) async throws -> LicenseValidationResponse {
+        let url = URL(string: "\(baseURL)/validate-license?license=\(licenseKey)&deviceId=\(deviceId)")!
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+
+        guard 200...299 ~= httpResponse.statusCode else {
+            throw APIError.httpError(httpResponse.statusCode)
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let success = json?["success"] as? Bool ?? false
+        let message = json?["message"] as? String ?? ""
+
+                // Handle specific error messages from API docs
+        if message.contains("License already used on another device") {
+            return LicenseValidationResponse(
+                valid: false,
+                errorMessage: "This license is already being used by another device."
+            )
+        }
+
+        if message.contains("Invalid license key") {
+            return LicenseValidationResponse(
+                valid: false,
+                errorMessage: "Invalid license key."
+            )
+        }
+
+        return LicenseValidationResponse(
+            valid: success,
+            errorMessage: success ? nil : message
+        )
+    }
+
+    func callUpdateDeviceAPI(deviceId: String, licenseKey: String) async throws -> UpdateDeviceResponse {
         let url = URL(string: "\(baseURL)/users/update-device")!
 
         var request = URLRequest(url: url)
@@ -329,49 +386,22 @@ extension DeviceRegistrationService {
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        let success = json?["success"] as? Bool ?? false
-        let dataDict = json?["data"] as? [String: Any]
-        let deviceData = dataDict?["device"] as? [String: Any]
-        let userData = deviceData?["user"] as? [String: Any]
-
-        return LicenseValidationResponse(
-            valid: success && userData?["license"] != nil,
-            expiresAt: nil, // Not provided in this API
-            userEmail: userData?["email"] as? String,
-            licenseType: "PRO", // Default license type
-            errorMessage: success ? nil : (json?["message"] as? String)
+        return UpdateDeviceResponse(
+            success: json?["success"] as? Bool ?? false,
+            message: json?["message"] as? String ?? "",
+            data: json?["data"] as? UpdateDeviceData
         )
     }
 
-    private func callCheckDeviceStatusAPI(deviceId: String) async throws -> DeviceStatusResponse {
-        let url = URL(string: "\(baseURL)/users/check-device?deviceId=\(deviceId)")!
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
-        }
-
-        guard 200...299 ~= httpResponse.statusCode else {
-            throw APIError.httpError(httpResponse.statusCode)
-        }
-
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-
-        let deviceData = json?["data"] as? [String: Any]
+    func callCheckDeviceStatusAPI(deviceId: String) async throws -> DeviceStatusResponse {
+        let json = try await callCheckDeviceAPI(deviceId: deviceId)
+        let deviceData = json["data"] as? [String: Any]
         let userData = deviceData?["user"] as? [String: Any]
 
         return DeviceStatusResponse(
             deviceId: deviceData?["deviceId"] as? String ?? deviceId,
             remainingUses: deviceData?["freeCredits"] as? Int ?? 0,
-            totalUsage: 0, // Not provided in API response
             requiresLicense: userData?["license"] == nil && (deviceData?["freeCredits"] as? Int ?? 0) <= 0,
-            lastUsedAt: Date(), // Not provided in API response
-            status: json?["success"] as? Bool == true ? "active" : "unknown"
         )
     }
 }
@@ -404,9 +434,7 @@ struct UserCheckResponse {
     let exists: Bool
     let userId: String?
     let remainingUses: Int
-    let totalUsage: Int
     let hasLicense: Bool
-    let licenseStatus: String?
     let quotaComplete: Bool
 }
 
@@ -415,9 +443,7 @@ struct DeviceRegistrationResponse {
     let registered: Bool
     let remainingUses: Int
     let requiresLicense: Bool
-    let registrationToken: String?
     let message: String
-    let userStatus: String
 
     func toDict() -> [String: Any] {
         return [
@@ -425,33 +451,25 @@ struct DeviceRegistrationResponse {
             "registered": registered,
             "remaining_uses": remainingUses,
             "requires_license": requiresLicense,
-            "registration_token": registrationToken ?? "",
             "message": message,
-            "user_status": userStatus
         ]
     }
 }
 
 struct LicenseValidationResponse {
     let valid: Bool
-    let expiresAt: Date?
-    let userEmail: String?
-    let licenseType: String?
     let errorMessage: String?
 }
+
 
 struct DeviceStatusResponse {
     let deviceId: String
     let remainingUses: Int
-    let totalUsage: Int
     let requiresLicense: Bool
-    let lastUsedAt: Date
-    let status: String
 }
 
 struct UsageResponse {
     let remainingUses: Int
-    let totalUsage: Int
     let requiresLicense: Bool
     let message: String
 }

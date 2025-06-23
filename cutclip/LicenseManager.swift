@@ -68,11 +68,11 @@ class LicenseManager: ObservableObject {
         let result = await deviceRegistration.validateLicense(licenseKey)
 
         switch result {
-        case .success(let response):
+        case .success(_):
             licenseStatus = .licensed(
                 key: licenseKey,
-                expiresAt: response.expiresAt,
-                userEmail: response.userEmail
+                expiresAt: nil, // No expiration from API
+                userEmail: nil  // No user email from API
             )
             // License status will be refreshed automatically on next check
             needsLicenseSetup = false
@@ -140,15 +140,25 @@ class LicenseManager: ObservableObject {
     func refreshLicenseStatus() async {
         print("🔄 Refreshing license status...")
 
-        // Check for stored license
+                // Check for stored license
         if let storedLicense = secureStorage.retrieveLicense() {
-            // TODO: Validate with server that license is still valid
-            licenseStatus = .licensed(
-                key: storedLicense.key,
-                expiresAt: nil, // Would get from server validation
-                userEmail: nil  // Would get from server validation
-            )
-            return
+            // Validate stored license with server
+            let validationResult = await deviceRegistration.validateLicense(storedLicense.key)
+
+            switch validationResult {
+            case .success(_):
+                licenseStatus = .licensed(
+                    key: storedLicense.key,
+                    expiresAt: nil, // No expiration from API
+                    userEmail: nil  // No user email from API
+                )
+                return
+            case .failure(_):
+                // License is invalid, remove it
+                let _ = secureStorage.deleteLicense()
+                print("🔐 Stored license was invalid and removed")
+                // Continue to check device status without license
+            }
         }
 
         // Check device status with backend
@@ -177,7 +187,7 @@ class LicenseManager: ObservableObject {
     }
 
     private func registerDevice() async {
-        let result = await deviceRegistration.registerDevice()
+        let result = await deviceRegistration.registerDeviceAndCheckLicense()
 
         switch result {
         case .success(let response):

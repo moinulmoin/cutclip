@@ -80,7 +80,6 @@ class DeviceRegistrationService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer your-api-key", forHTTPHeaderField: "Authorization")
 
         let requestBody: [String: Any] = [
             "device_id": deviceId,
@@ -159,7 +158,6 @@ class DeviceRegistrationService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer your-api-key", forHTTPHeaderField: "Authorization")
 
         let requestBody: [String: Any] = [
             "device_id": deviceId,
@@ -252,7 +250,6 @@ class DeviceRegistrationService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer your-api-key", forHTTPHeaderField: "Authorization")
 
         let requestBody: [String: Any] = [
             "action": "video_clip",
@@ -311,7 +308,6 @@ extension DeviceRegistrationService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer your-api-key", forHTTPHeaderField: "Authorization")
 
         let requestBody: [String: Any] = [
             "license_key": licenseKey,
@@ -352,7 +348,6 @@ extension DeviceRegistrationService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer your-api-key", forHTTPHeaderField: "Authorization")
 
         let (data, response) = try await URLSession.shared.data(for: request)
 

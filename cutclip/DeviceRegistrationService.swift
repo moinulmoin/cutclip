@@ -14,6 +14,10 @@ class DeviceRegistrationService: ObservableObject {
     @Published var isRegistering = false
     @Published var registrationError: String?
 
+    private var baseURL: String {
+        ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "http://localhost:3000/api"
+    }
+
     private init() {}
 
     // MARK: - Main Device Registration Flow
@@ -75,19 +79,11 @@ class DeviceRegistrationService: ObservableObject {
     // MARK: - User Management
 
     private func checkUserExists(deviceId: String) async throws -> UserCheckResponse {
-        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
-        let url = URL(string: "\(baseURL)/v1/users/check")!
+        let url = URL(string: "\(baseURL)/users/check-device?deviceId=\(deviceId)")!
 
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let requestBody: [String: Any] = [
-            "device_id": deviceId,
-            "timestamp": ISO8601DateFormatter().string(from: Date())
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -100,15 +96,18 @@ class DeviceRegistrationService: ObservableObject {
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let success = json?["success"] as? Bool ?? false
+        let deviceData = json?["data"] as? [String: Any]
+        let userData = deviceData?["user"] as? [String: Any]
 
         return UserCheckResponse(
-            exists: json?["exists"] as? Bool ?? false,
-            userId: json?["user_id"] as? String,
-            remainingUses: json?["remaining_uses"] as? Int ?? 0,
-            totalUsage: json?["total_usage"] as? Int ?? 0,
-            hasLicense: json?["has_license"] as? Bool ?? false,
-            licenseStatus: json?["license_status"] as? String,
-            quotaComplete: json?["quota_complete"] as? Bool ?? false
+            exists: success && deviceData != nil,
+            userId: userData?["id"] as? String,
+            remainingUses: deviceData?["freeCredits"] as? Int ?? 0,
+            totalUsage: 0, // Not provided in API response
+            hasLicense: userData?["license"] != nil,
+            licenseStatus: userData?["license"] != nil ? "active" : nil,
+            quotaComplete: (deviceData?["freeCredits"] as? Int ?? 0) <= 0
         )
     }
 
@@ -154,20 +153,16 @@ class DeviceRegistrationService: ObservableObject {
     }
 
     private func handleNewUser(deviceId: String, deviceInfo: [String: String]) async throws -> DeviceRegistrationResponse {
-        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
-        let url = URL(string: "\(baseURL)/v1/users/create")!
+        let url = URL(string: "\(baseURL)/users/create-device")!
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let requestBody: [String: Any] = [
-            "device_id": deviceId,
-            "device_info": deviceInfo,
-            "app_version": deviceInfo["app_version"] ?? "1.0.0",
-            "start_trial": true,
-            "trial_uses": 3,
-            "timestamp": ISO8601DateFormatter().string(from: Date())
+            "deviceId": deviceId,
+            "osVersion": deviceInfo["os_version"] ?? "",
+            "model": deviceInfo["device_model"] ?? ""
         ]
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
@@ -184,13 +179,15 @@ class DeviceRegistrationService: ObservableObject {
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
+        let deviceData = json?["data"] as? [String: Any]
+
         return DeviceRegistrationResponse(
-            deviceId: json?["device_id"] as? String ?? deviceId,
-            registered: json?["created"] as? Bool ?? false,
-            remainingUses: json?["remaining_uses"] as? Int ?? 3,
+            deviceId: deviceData?["deviceId"] as? String ?? deviceId,
+            registered: json?["success"] as? Bool ?? false,
+            remainingUses: 100, // New devices get 100 free credits as per API docs
             requiresLicense: false,
-            registrationToken: json?["registration_token"] as? String,
-            message: json?["message"] as? String ?? "Account created with 3 free uses",
+            registrationToken: nil,
+            message: json?["message"] as? String ?? "Device created successfully",
             userStatus: "trial_active"
         )
     }
@@ -247,16 +244,14 @@ class DeviceRegistrationService: ObservableObject {
     }
 
     private func callRecordUsageAPI(deviceId: String) async throws -> UsageResponse {
-        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
-        let url = URL(string: "\(baseURL)/v1/users/\(deviceId)/usage")!
+        let url = URL(string: "\(baseURL)/users/decrement-free-credits")!
 
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let requestBody: [String: Any] = [
-            "action": "video_clip",
-            "timestamp": ISO8601DateFormatter().string(from: Date())
+            "deviceId": deviceId
         ]
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
@@ -273,10 +268,13 @@ class DeviceRegistrationService: ObservableObject {
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
+        let dataDict = json?["data"] as? [String: Any]
+        let deviceData = dataDict?["device"] as? [String: Any]
+
         return UsageResponse(
-            remainingUses: json?["remaining_uses"] as? Int ?? 0,
-            totalUsage: json?["total_usage"] as? Int ?? 0,
-            requiresLicense: json?["requires_license"] as? Bool ?? false,
+            remainingUses: deviceData?["freeCredits"] as? Int ?? 0,
+            totalUsage: 0, // Not provided in this API response
+            requiresLicense: (deviceData?["freeCredits"] as? Int ?? 0) <= 0,
             message: json?["message"] as? String ?? ""
         )
     }
@@ -306,18 +304,15 @@ class DeviceRegistrationService: ObservableObject {
 extension DeviceRegistrationService {
 
     private func callValidateLicenseAPI(licenseKey: String, deviceId: String, appVersion: String) async throws -> LicenseValidationResponse {
-        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
-        let url = URL(string: "\(baseURL)/v1/licenses/validate")!
+        let url = URL(string: "\(baseURL)/users/update-device")!
 
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let requestBody: [String: Any] = [
-            "license_key": licenseKey,
-            "device_id": deviceId,
-            "app_version": appVersion,
-            "timestamp": ISO8601DateFormatter().string(from: Date())
+            "deviceId": deviceId,
+            "license": licenseKey
         ]
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
@@ -334,21 +329,22 @@ extension DeviceRegistrationService {
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        let expiresAtString = json?["expires_at"] as? String
-        let expiresAt = expiresAtString.flatMap { ISO8601DateFormatter().date(from: $0) }
+        let success = json?["success"] as? Bool ?? false
+        let dataDict = json?["data"] as? [String: Any]
+        let deviceData = dataDict?["device"] as? [String: Any]
+        let userData = deviceData?["user"] as? [String: Any]
 
         return LicenseValidationResponse(
-            valid: json?["valid"] as? Bool ?? false,
-            expiresAt: expiresAt,
-            userEmail: json?["user_email"] as? String,
-            licenseType: json?["license_type"] as? String,
-            errorMessage: json?["error_message"] as? String
+            valid: success && userData?["license"] != nil,
+            expiresAt: nil, // Not provided in this API
+            userEmail: userData?["email"] as? String,
+            licenseType: "PRO", // Default license type
+            errorMessage: success ? nil : (json?["message"] as? String)
         )
     }
 
     private func callCheckDeviceStatusAPI(deviceId: String) async throws -> DeviceStatusResponse {
-        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
-        let url = URL(string: "\(baseURL)/v1/devices/\(deviceId)/status")!
+        let url = URL(string: "\(baseURL)/users/check-device?deviceId=\(deviceId)")!
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -366,16 +362,16 @@ extension DeviceRegistrationService {
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        let lastUsedString = json?["last_used_at"] as? String
-        let lastUsedAt = lastUsedString.flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
+        let deviceData = json?["data"] as? [String: Any]
+        let userData = deviceData?["user"] as? [String: Any]
 
         return DeviceStatusResponse(
-            deviceId: json?["device_id"] as? String ?? deviceId,
-            remainingUses: json?["remaining_uses"] as? Int ?? 0,
-            totalUsage: json?["total_usage"] as? Int ?? 0,
-            requiresLicense: json?["requires_license"] as? Bool ?? true,
-            lastUsedAt: lastUsedAt,
-            status: json?["status"] as? String ?? "unknown"
+            deviceId: deviceData?["deviceId"] as? String ?? deviceId,
+            remainingUses: deviceData?["freeCredits"] as? Int ?? 0,
+            totalUsage: 0, // Not provided in API response
+            requiresLicense: userData?["license"] == nil && (deviceData?["freeCredits"] as? Int ?? 0) <= 0,
+            lastUsedAt: Date(), // Not provided in API response
+            status: json?["success"] as? Bool == true ? "active" : "unknown"
         )
     }
 }

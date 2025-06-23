@@ -15,6 +15,8 @@ struct ClipperView: View {
 
     @EnvironmentObject private var binaryManager: BinaryManager
     @EnvironmentObject private var errorHandler: ErrorHandler
+    @EnvironmentObject private var licenseManager: LicenseManager
+    @EnvironmentObject private var usageTracker: UsageTracker
 
     @State private var isProcessing = false
     @State private var processingProgress: Double = 0.0
@@ -22,13 +24,42 @@ struct ClipperView: View {
     @State private var completedVideoPath: String?
 
     let qualityOptions = ["360p", "480p", "720p", "1080p", "Best"]
+    
+    @ViewBuilder
+    private var usageStatusIndicator: some View {
+        HStack(spacing: 6) {
+            switch usageTracker.getUsageStatus() {
+            case .licensed:
+                Image(systemName: "checkmark.seal.fill")
+                    .foregroundColor(.green)
+                Text("Licensed")
+                    .foregroundColor(.green)
+            case .freeTrial(let remaining):
+                Image(systemName: "gift.fill")
+                    .foregroundColor(.blue)
+                Text("\(remaining) uses left")
+                    .foregroundColor(remaining <= 1 ? .orange : .blue)
+            case .trialExpired:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text("Trial expired")
+                    .foregroundColor(.orange)
+            }
+        }
+        .font(.caption)
+        .fontWeight(.medium)
+    }
 
     var body: some View {
         VStack(spacing: 32) {
-            // Title
-            Text("CutClip")
-                .font(.system(size: 28, weight: .light, design: .rounded))
-                .foregroundStyle(.primary)
+            // Title with usage status
+            VStack(spacing: 8) {
+                Text("CutClip")
+                    .font(.system(size: 28, weight: .light, design: .rounded))
+                    .foregroundStyle(.primary)
+                
+                usageStatusIndicator
+            }
 
             VStack(spacing: 24) {
                 // URL Input
@@ -162,6 +193,14 @@ struct ClipperView: View {
         completedVideoPath = nil
 
         do {
+            // Check license and usage first
+            processingMessage = "Checking license..."
+            processingProgress = 0.05
+            
+            guard usageTracker.canUseApp() else {
+                throw AppError.licenseError("No remaining uses. License required to continue.")
+            }
+            
             // Validate inputs
             processingMessage = "Validating..."
             processingProgress = 0.1
@@ -200,6 +239,11 @@ struct ClipperView: View {
             processingProgress = 0.7
             let outputPath = try await clipSvc.clipVideo(inputPath: downloadedPath, job: job)
 
+            // Record usage (decrement credits if not licensed)
+            processingMessage = "Recording usage..."
+            processingProgress = 0.9
+            try await usageTracker.decrementCredits()
+            
             // Complete
             processingMessage = "Complete!"
             processingProgress = 1.0
@@ -209,6 +253,8 @@ struct ClipperView: View {
             errorHandler.handle(error.toAppError())
         } catch let error as ClipError {
             errorHandler.handle(error.toAppError())
+        } catch let error as UsageError {
+            errorHandler.handle(AppError.licenseError(error.localizedDescription))
         } catch {
             errorHandler.handle(error)
         }

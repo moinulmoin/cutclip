@@ -62,6 +62,7 @@ class DownloadService: ObservableObject, Sendable {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("CutClip")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
+        // Let yt-dlp use the video title but sanitize it for filesystem safety
         let outputTemplate = tempDir.appendingPathComponent("%(title)s.%(ext)s").path
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -88,6 +89,11 @@ class DownloadService: ObservableObject, Sendable {
                         await downloadTracker.appendData(data)
                         let output = String(data: data, encoding: .utf8) ?? ""
 
+                        // Debug: Print yt-dlp output to help diagnose file path issues
+                        if !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            print("yt-dlp output: \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
+                        }
+
                         // Parse progress from yt-dlp output
                         if let progress = parseProgress(from: output) {
                             await MainActor.run {
@@ -97,6 +103,7 @@ class DownloadService: ObservableObject, Sendable {
 
                         // Look for downloaded file path
                         if let filePath = parseDownloadedFilePath(from: output) {
+                            print("Parsed file path: \(filePath)")
                             await downloadTracker.setDownloadedFilePath(filePath)
                         }
                     }
@@ -108,25 +115,27 @@ class DownloadService: ObservableObject, Sendable {
 
                 Task {
                     defer {
-                        // Clean up temporary files on completion or failure
-                        self.cleanupTempDirectory(tempDir)
+                        // DON'T clean up immediately - let the file be used by ClipService first
+                        // self.cleanupTempDirectory(tempDir)
+                        print("DEBUG: Skipping cleanup to allow ClipService to access file")
                     }
                     
                     if process.terminationStatus == 0 {
                         if let filePath = await downloadTracker.downloadedFilePath {
-                            continuation.resume(returning: filePath)
-                        } else {
-                            // Try to find the downloaded file in temp directory
-                            do {
-                                let files = try FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
-                                if let videoFile = files.first(where: { !$0.hasDirectoryPath }) {
-                                    continuation.resume(returning: videoFile.path)
-                                } else {
-                                    continuation.resume(throwing: DownloadError.fileNotFound)
-                                }
-                            } catch {
-                                continuation.resume(throwing: DownloadError.downloadFailed(error.localizedDescription))
+                            print("DEBUG: Parsed file path: \(filePath)")
+                            // Verify the parsed file actually exists
+                            if FileManager.default.fileExists(atPath: filePath) {
+                                print("DEBUG: File exists at parsed path")
+                                continuation.resume(returning: filePath)
+                            } else {
+                                print("DEBUG: File does NOT exist at parsed path, searching directory")
+                                // File doesn't exist at parsed path, fall back to directory search
+                                self.findDownloadedFile(in: tempDir, continuation: continuation)
                             }
+                        } else {
+                            print("DEBUG: No parsed path, searching directory")
+                            // No parsed path, search directory
+                            self.findDownloadedFile(in: tempDir, continuation: continuation)
                         }
                     } else {
                         let outputData = await downloadTracker.outputData
@@ -159,6 +168,54 @@ class DownloadService: ObservableObject, Sendable {
                 errorMessage: job.errorMessage
             )
             currentJob = updatedJob
+        }
+    }
+
+    // MARK: - Helper Methods
+    
+    private nonisolated func findDownloadedFile(in tempDir: URL, continuation: CheckedContinuation<String, Error>) {
+        do {
+            print("DEBUG: Searching temp directory: \(tempDir.path)")
+            let files = try FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey])
+            print("DEBUG: Found \(files.count) files in temp directory")
+            
+            // Debug: Print all files
+            for file in files {
+                let resourceValues = try? file.resourceValues(forKeys: [.fileSizeKey])
+                let fileSize = resourceValues?.fileSize ?? 0
+                print("DEBUG: File: \(file.lastPathComponent) (size: \(fileSize) bytes)")
+            }
+            
+            // Filter for video files (not directories, and with reasonable size > 0)
+            let videoFiles = files.filter { file in
+                guard !file.hasDirectoryPath else { return false }
+                
+                // Check file size to ensure it's not empty
+                let resourceValues = try? file.resourceValues(forKeys: [.fileSizeKey])
+                let fileSize = resourceValues?.fileSize ?? 0
+                
+                // Check for common video extensions
+                let videoExtensions = ["mp4", "webm", "mkv", "avi", "mov", "flv", "m4v", "3gp"]
+                let fileExtension = file.pathExtension.lowercased()
+                
+                return fileSize > 0 && videoExtensions.contains(fileExtension)
+            }
+            
+            print("DEBUG: Found \(videoFiles.count) video files")
+            
+            if let videoFile = videoFiles.first {
+                print("DEBUG: Using video file: \(videoFile.path)")
+                continuation.resume(returning: videoFile.path)
+            } else {
+                // Debug: List all files found
+                let allFiles = files.map { "\($0.lastPathComponent) (\($0.pathExtension))" }.joined(separator: ", ")
+                let errorMessage = "No video files found in temp directory. Files present: \(allFiles.isEmpty ? "none" : allFiles)"
+                print("DEBUG: \(errorMessage)")
+                continuation.resume(throwing: DownloadError.fileNotFound)
+            }
+        } catch {
+            print("DEBUG: Error searching temp directory: \(error)")
+            continuation.resume(throwing: DownloadError.downloadFailed("Failed to search temp directory: \(error.localizedDescription)"))
         }
     }
 
@@ -215,14 +272,26 @@ private nonisolated func parseProgress(from output: String) -> Double? {
 }
 
 private nonisolated func parseDownloadedFilePath(from output: String) -> String? {
-    // Look for patterns like "[download] Destination: /path/to/file.mp4"
-    let destinationPattern = #"\[download\] Destination: (.+)"#
-    let regex = try? NSRegularExpression(pattern: destinationPattern)
-    let range = NSRange(output.startIndex..<output.endIndex, in: output)
-
-    if let match = regex?.firstMatch(in: output, range: range) {
-        let matchRange = Range(match.range(at: 1), in: output)!
-        return String(output[matchRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+    // Look for multiple possible patterns from yt-dlp output
+    let patterns = [
+        #"\[download\] Destination: (.+)"#,           // Standard destination
+        #"\[download\] (.+) has already been downloaded"#, // Already downloaded case
+        #"has already been downloaded and merged into (.+)"#, // Merged case
+        #"\[merger\] Merging formats into \"(.+)\""#,  // Format merging
+        #"\[download\] 100% of .+ in .+ to (.+)"#     // Completion message with path
+    ]
+    
+    for pattern in patterns {
+        let regex = try? NSRegularExpression(pattern: pattern)
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        
+        if let match = regex?.firstMatch(in: output, range: range) {
+            let matchRange = Range(match.range(at: 1), in: output)!
+            let filePath = String(output[matchRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            // Remove quotes if present
+            let cleanPath = filePath.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            return cleanPath
+        }
     }
 
     return nil

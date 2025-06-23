@@ -10,6 +10,8 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var binaryManager = BinaryManager()
     @StateObject private var errorHandler = ErrorHandler()
+    @StateObject private var licenseManager = LicenseManager.shared
+    @StateObject private var usageTracker = UsageTracker.shared
     @AppStorage("disclaimerAccepted") private var disclaimerAccepted = false
     
     var body: some View {
@@ -18,10 +20,17 @@ struct ContentView: View {
                 DisclaimerView()
             } else if !binaryManager.isConfigured {
                 AutoSetupView(binaryManager: binaryManager)
+            } else if licenseManager.needsLicenseSetup {
+                LicenseStatusView()
+                    .environmentObject(licenseManager)
+                    .environmentObject(usageTracker)
+                    .environmentObject(errorHandler)
             } else {
                 ClipperView()
                     .environmentObject(binaryManager)
                     .environmentObject(errorHandler)
+                    .environmentObject(licenseManager)
+                    .environmentObject(usageTracker)
             }
         }
         .errorAlert(errorHandler)

@@ -22,13 +22,20 @@ class ClipService: ObservableObject, Sendable {
             throw ClipError.binaryNotFound("FFmpeg not configured")
         }
 
+        print("DEBUG ClipService: Input path received: \(inputPath)")
+        print("DEBUG ClipService: File exists at input path: \(FileManager.default.fileExists(atPath: inputPath))")
+
         // Generate output filename
         let outputFileName = generateOutputFileName(for: job)
         let outputPath = getOutputDirectory().appendingPathComponent(outputFileName).path
 
+        let sanitizedInputPath = sanitizeFilePath(inputPath)
+        print("DEBUG ClipService: Sanitized input path: \(sanitizedInputPath)")
+        print("DEBUG ClipService: File exists at sanitized path: \(FileManager.default.fileExists(atPath: sanitizedInputPath))")
+
         // Build FFmpeg arguments with input sanitization
         var arguments = [
-            "-i", sanitizeFilePath(inputPath),
+            "-i", sanitizedInputPath,
             "-ss", sanitizeTimeString(job.startTime),
             "-to", sanitizeTimeString(job.endTime),
             "-c:v", "libx264",
@@ -167,20 +174,23 @@ class ClipService: ObservableObject, Sendable {
     // MARK: - Input Sanitization
 
     private nonisolated func sanitizeFilePath(_ path: String) -> String {
-        // Remove null bytes and control characters
+        // Remove only null bytes and control characters that could break the process
         let sanitized = path.replacingOccurrences(of: "\0", with: "")
             .replacingOccurrences(of: "\n", with: "")
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\t", with: "")
         
-        // Ensure path doesn't contain command injection attempts
-        let dangerousPatterns = [";", "|", "&", "`", "$", "(", ")", "<", ">"]
-        var result = sanitized
+        // For security, check for command injection patterns but don't remove valid file path characters
+        let dangerousPatterns = [";", "|", "&", "`"]
         for pattern in dangerousPatterns {
-            result = result.replacingOccurrences(of: pattern, with: "")
+            if sanitized.contains(pattern) {
+                // Log potential security issue but don't modify the path
+                print("Warning: File path contains potentially dangerous pattern: \(pattern)")
+            }
         }
         
-        return result
+        // Return the path as-is since Process.arguments handles escaping automatically
+        return sanitized
     }
 
     private nonisolated func sanitizeTimeString(_ timeString: String) -> String {

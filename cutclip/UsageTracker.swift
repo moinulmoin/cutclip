@@ -16,7 +16,7 @@ class UsageTracker: ObservableObject {
     @Published var isLoading: Bool = false
 
     // MARK: - API Configuration
-    private let baseURL = "https://appdomain.com/api"
+    private let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "http://localhost:3000/api"
     private let usersEndpoint = "/users"
     private let maxFreeCredits = 3
 
@@ -253,6 +253,11 @@ class UsageTracker: ObservableObject {
     func getUsageStatus() -> UsageStatus {
         if SecureStorage.shared.hasValidLicense() {
             return .licensed
+        }
+
+        // If still loading/initializing, show max credits to avoid "trial expired" during setup
+        if isLoading && currentCredits == 0 {
+            return .freeTrial(remaining: maxFreeCredits)
         }
 
         if currentCredits > 0 {

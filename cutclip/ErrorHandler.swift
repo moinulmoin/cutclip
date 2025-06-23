@@ -119,6 +119,7 @@ enum AppError: LocalizedError, Equatable, Sendable {
     case downloadFailed(String)
     case clippingFailed(String)
     case fileSystem(String)
+    case licenseError(String)
     case unknown(String)
     
     var errorTitle: String {
@@ -137,6 +138,8 @@ enum AppError: LocalizedError, Equatable, Sendable {
             return "Processing Failed"
         case .fileSystem:
             return "File Access Error"
+        case .licenseError:
+            return "License Required"
         case .unknown:
             return "Something Went Wrong"
         }
@@ -157,6 +160,8 @@ enum AppError: LocalizedError, Equatable, Sendable {
         case .clippingFailed(let message):
             return message
         case .fileSystem(let message):
+            return message
+        case .licenseError(let message):
             return message
         case .unknown(let message):
             return message
@@ -179,6 +184,8 @@ enum AppError: LocalizedError, Equatable, Sendable {
             return "Verify the time inputs and try again."
         case .fileSystem:
             return "Check file permissions and available disk space."
+        case .licenseError:
+            return "Please enter a valid license key or wait for your trial credits to reset."
         case .unknown:
             return "Please try again or restart the application."
         }
@@ -188,7 +195,7 @@ enum AppError: LocalizedError, Equatable, Sendable {
         switch self {
         case .network, .downloadFailed, .clippingFailed, .unknown:
             return true
-        case .diskSpace, .invalidInput, .binaryNotFound, .fileSystem:
+        case .diskSpace, .invalidInput, .binaryNotFound, .fileSystem, .licenseError:
             return false
         }
     }

@@ -231,15 +231,7 @@ class LicenseManager: ObservableObject {
         initializeLicenseSystem()
     }
 
-    // MARK: - Mock License Keys (for testing)
 
-    func getMockLicenseKeys() -> [String] {
-        return [
-            "DEMO-1234-5678-ABCD",
-            "TEST-AAAA-BBBB-CCCC",
-            "CUTC-CLIP-2025-MOCK"
-        ]
-    }
 }
 
 // MARK: - License Status Enum

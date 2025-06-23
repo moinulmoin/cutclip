@@ -75,7 +75,8 @@ class DeviceRegistrationService: ObservableObject {
     // MARK: - User Management
 
     private func checkUserExists(deviceId: String) async throws -> UserCheckResponse {
-        let url = URL(string: "https://api.cutclip.com/v1/users/check")!
+        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
+        let url = URL(string: "\(baseURL)/v1/users/check")!
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -153,7 +154,8 @@ class DeviceRegistrationService: ObservableObject {
     }
 
     private func handleNewUser(deviceId: String, deviceInfo: [String: String]) async throws -> DeviceRegistrationResponse {
-        let url = URL(string: "https://api.cutclip.com/v1/users/create")!
+        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
+        let url = URL(string: "\(baseURL)/v1/users/create")!
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -245,7 +247,8 @@ class DeviceRegistrationService: ObservableObject {
     }
 
     private func callRecordUsageAPI(deviceId: String) async throws -> UsageResponse {
-        let url = URL(string: "https://api.cutclip.com/v1/users/\(deviceId)/usage")!
+        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
+        let url = URL(string: "\(baseURL)/v1/users/\(deviceId)/usage")!
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -303,7 +306,8 @@ class DeviceRegistrationService: ObservableObject {
 extension DeviceRegistrationService {
 
     private func callValidateLicenseAPI(licenseKey: String, deviceId: String, appVersion: String) async throws -> LicenseValidationResponse {
-        let url = URL(string: "https://api.cutclip.com/v1/licenses/validate")!
+        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
+        let url = URL(string: "\(baseURL)/v1/licenses/validate")!
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -343,7 +347,8 @@ extension DeviceRegistrationService {
     }
 
     private func callCheckDeviceStatusAPI(deviceId: String) async throws -> DeviceStatusResponse {
-        let url = URL(string: "https://api.cutclip.com/v1/devices/\(deviceId)/status")!
+        let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://api.cutclip.com"
+        let url = URL(string: "\(baseURL)/v1/devices/\(deviceId)/status")!
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"

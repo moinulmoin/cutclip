@@ -26,11 +26,11 @@ class ClipService: ObservableObject, Sendable {
         let outputFileName = generateOutputFileName(for: job)
         let outputPath = getOutputDirectory().appendingPathComponent(outputFileName).path
 
-        // Build FFmpeg arguments
+        // Build FFmpeg arguments with input sanitization
         var arguments = [
-            "-i", inputPath,
-            "-ss", job.startTime,
-            "-to", job.endTime,
+            "-i", sanitizeFilePath(inputPath),
+            "-ss", sanitizeTimeString(job.startTime),
+            "-to", sanitizeTimeString(job.endTime),
             "-c:v", "libx264",
             "-c:a", "aac",
             "-preset", "medium",
@@ -39,13 +39,13 @@ class ClipService: ObservableObject, Sendable {
 
         // Add crop filter if aspect ratio is not original
         if let cropFilter = job.aspectRatio.cropFilter {
-            arguments.append(contentsOf: ["-vf", cropFilter])
+            arguments.append(contentsOf: ["-vf", sanitizeFilterString(cropFilter)])
         }
 
         arguments.append(contentsOf: [
             "-avoid_negative_ts", "make_zero",
             "-y", // Overwrite output file
-            outputPath
+            sanitizeFilePath(outputPath)
         ])
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -162,6 +162,37 @@ class ClipService: ObservableObject, Sendable {
         let seconds = components[2]
 
         return hours * 3600 + minutes * 60 + seconds
+    }
+
+    // MARK: - Input Sanitization
+
+    private nonisolated func sanitizeFilePath(_ path: String) -> String {
+        // Remove null bytes and control characters
+        let sanitized = path.replacingOccurrences(of: "\0", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\t", with: "")
+        
+        // Ensure path doesn't contain command injection attempts
+        let dangerousPatterns = [";", "|", "&", "`", "$", "(", ")", "<", ">"]
+        var result = sanitized
+        for pattern in dangerousPatterns {
+            result = result.replacingOccurrences(of: pattern, with: "")
+        }
+        
+        return result
+    }
+
+    private nonisolated func sanitizeTimeString(_ timeString: String) -> String {
+        // Only allow digits, colons, and dots for time format HH:MM:SS.mmm
+        let allowedCharacters = CharacterSet(charactersIn: "0123456789:.")
+        return String(timeString.unicodeScalars.filter { allowedCharacters.contains($0) })
+    }
+
+    private nonisolated func sanitizeFilterString(_ filterString: String) -> String {
+        // Allow only safe characters for video filters
+        let allowedCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:=,.-_")
+        return String(filterString.unicodeScalars.filter { allowedCharacters.contains($0) })
     }
 }
 

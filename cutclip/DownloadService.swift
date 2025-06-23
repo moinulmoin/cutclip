@@ -17,11 +17,35 @@ class DownloadService: ObservableObject, Sendable {
     }
 
     nonisolated func isValidYouTubeURL(_ urlString: String) -> Bool {
+        // Basic input sanitization
+        guard !urlString.isEmpty,
+              urlString.count <= 2048, // Reasonable URL length limit
+              !urlString.contains("\0"),
+              !urlString.contains("\n"),
+              !urlString.contains("\r") else {
+            return false
+        }
+        
         guard let url = URL(string: urlString) else { return false }
         guard let host = url.host else { return false }
-
+        
+        // Check for valid YouTube hosts
         let validHosts = ["youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com"]
-        return validHosts.contains(host.lowercased())
+        guard validHosts.contains(host.lowercased()) else { return false }
+        
+        // Additional security checks
+        guard url.scheme == "https" || url.scheme == "http" else { return false }
+        
+        // Check for suspicious patterns
+        let suspiciousPatterns = ["javascript:", "data:", "file:", "ftp:"]
+        let lowercaseURL = urlString.lowercased()
+        for pattern in suspiciousPatterns {
+            if lowercaseURL.contains(pattern) {
+                return false
+            }
+        }
+        
+        return true
     }
 
     nonisolated func downloadVideo(for job: ClipJob) async throws -> String {
@@ -83,6 +107,11 @@ class DownloadService: ObservableObject, Sendable {
                 pipe.fileHandleForReading.readabilityHandler = nil
 
                 Task {
+                    defer {
+                        // Clean up temporary files on completion or failure
+                        self.cleanupTempDirectory(tempDir)
+                    }
+                    
                     if process.terminationStatus == 0 {
                         if let filePath = await downloadTracker.downloadedFilePath {
                             continuation.resume(returning: filePath)
@@ -130,6 +159,27 @@ class DownloadService: ObservableObject, Sendable {
                 errorMessage: job.errorMessage
             )
             currentJob = updatedJob
+        }
+    }
+
+    // MARK: - Cleanup
+
+    private nonisolated func cleanupTempDirectory(_ tempDir: URL) {
+        Task {
+            do {
+                // Only remove files older than 1 hour to avoid interfering with active downloads
+                let cutoffDate = Date().addingTimeInterval(-3600)
+                let files = try FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: [.creationDateKey])
+                
+                for file in files {
+                    if let creationDate = try? file.resourceValues(forKeys: [.creationDateKey]).creationDate,
+                       creationDate < cutoffDate {
+                        try? FileManager.default.removeItem(at: file)
+                    }
+                }
+            } catch {
+                print("Warning: Failed to clean up temp directory: \(error)")
+            }
         }
     }
 }

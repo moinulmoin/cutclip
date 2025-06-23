@@ -12,6 +12,7 @@ struct ContentView: View {
     @StateObject private var errorHandler = ErrorHandler()
     @StateObject private var licenseManager = LicenseManager.shared
     @StateObject private var usageTracker = UsageTracker.shared
+    @StateObject private var updateManager = UpdateManager.shared
     @AppStorage("disclaimerAccepted") private var disclaimerAccepted = false
     
     var body: some View {
@@ -25,12 +26,14 @@ struct ContentView: View {
                     .environmentObject(licenseManager)
                     .environmentObject(usageTracker)
                     .environmentObject(errorHandler)
+                    .environmentObject(updateManager)
             } else {
                 ClipperView()
                     .environmentObject(binaryManager)
                     .environmentObject(errorHandler)
                     .environmentObject(licenseManager)
                     .environmentObject(usageTracker)
+                    .environmentObject(updateManager)
             }
         }
         .errorAlert(errorHandler)

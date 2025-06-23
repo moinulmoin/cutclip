@@ -12,12 +12,14 @@ struct DisclaimerView: View {
     @State private var showContent = false
 
     var body: some View {
-        VStack(spacing: 32) {
+        ScrollView {
+            VStack(spacing: 32) {
             // Header
             VStack(spacing: 16) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.orange.gradient)
+                Image("AppLogo")
+                    .resizable()
+                    .frame(width: 48, height: 48)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                     .scaleEffect(showContent ? 1.0 : 0.5)
                     .animation(.bouncy(duration: 0.8).delay(0.2), value: showContent)
                 
@@ -30,7 +32,7 @@ struct DisclaimerView: View {
             
             // Content
             VStack(alignment: .leading, spacing: 20) {
-                Text("This app requires you to provide your own yt-dlp and FFmpeg binaries.")
+                Text("This app downloads and uses video processing tools to clip videos.")
                     .font(.title3.weight(.medium))
                     .foregroundStyle(.primary)
                     .opacity(showContent ? 1.0 : 0.0)
@@ -74,22 +76,18 @@ struct DisclaimerView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(.purple.gradient)
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.black.gradient)
             )
-            .shadow(color: .purple.opacity(0.3), radius: 8, x: 0, y: 4)
             .scaleEffect(showContent ? 1.0 : 0.8)
             .opacity(showContent ? 1.0 : 0.0)
             .animation(.bouncy(duration: 0.8).delay(1.4), value: showContent)
             .buttonStyle(.plain)
+            }
         }
         .padding(40)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(.regularMaterial)
-                .shadow(color: .black.opacity(0.1), radius: 30, x: 0, y: 15)
-        )
-        .frame(width: 580)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .frame(width: 500, height: 450)
         .onAppear {
             showContent = true
         }
@@ -106,7 +104,7 @@ struct DisclaimerPoint: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.callout)
-                .foregroundStyle(.purple.gradient)
+                .foregroundStyle(.black.gradient)
                 .frame(width: 20)
             
             Text(text)

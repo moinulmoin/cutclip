@@ -32,20 +32,20 @@ class AutoSetupService: ObservableObject, Sendable {
         }
 
         do {
-            // Step 1: Download yt-dlp
-            await updateProgress(0.1, "Downloading yt-dlp...")
+            // Step 1: Download tools
+            await updateProgress(0.1, "Downloading required components...")
             try await downloadYtDlp()
 
-            // Step 2: Download ffmpeg
-            await updateProgress(0.5, "Downloading FFmpeg...")
+            // Step 2: Download additional tools
+            await updateProgress(0.5, "Installing additional components...")
             try await downloadFFmpeg()
 
             // Step 3: Make executable
-            await updateProgress(0.8, "Setting up binaries...")
+            await updateProgress(0.8, "Configuring tools...")
             try makeExecutable()
 
             // Step 4: Verify
-            await updateProgress(0.9, "Verifying installation...")
+            await updateProgress(0.9, "Finalizing setup...")
             try await verifyBinaries()
 
             // Complete

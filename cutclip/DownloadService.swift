@@ -115,9 +115,11 @@ class DownloadService: ObservableObject, Sendable {
 
                 Task {
                     defer {
-                        // DON'T clean up immediately - let the file be used by ClipService first
-                        // self.cleanupTempDirectory(tempDir)
-                        print("DEBUG: Skipping cleanup to allow ClipService to access file")
+                        // Schedule cleanup after a delay to allow ClipService to use the file
+                        Task {
+                            try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
+                            self.cleanupTempDirectory(tempDir)
+                        }
                     }
                     
                     if process.terminationStatus == 0 {

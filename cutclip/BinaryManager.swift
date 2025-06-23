@@ -18,7 +18,9 @@ class BinaryManager: ObservableObject, Sendable {
     nonisolated init() {
         // Create app support directory
         let fileManager = FileManager.default
-        let supportDir = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let supportDir = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            fatalError("Unable to access Application Support directory")
+        }
         appSupportDirectory = supportDir.appendingPathComponent("CutClip")
 
         // Create directory if it doesn't exist

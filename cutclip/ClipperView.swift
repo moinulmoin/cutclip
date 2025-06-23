@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Sparkle
 
 struct ClipperView: View {
     @State private var urlText = ""
@@ -17,6 +18,7 @@ struct ClipperView: View {
     @EnvironmentObject private var errorHandler: ErrorHandler
     @EnvironmentObject private var licenseManager: LicenseManager
     @EnvironmentObject private var usageTracker: UsageTracker
+    @EnvironmentObject private var updateManager: UpdateManager
 
     @State private var isProcessing = false
     @State private var processingProgress: Double = 0.0
@@ -90,7 +92,7 @@ struct ClipperView: View {
                 
                 Spacer()
                 
-                // Settings/License button
+                // Settings Button
                 VStack {
                     Button(action: {
                         showingLicenseView = true
@@ -100,7 +102,7 @@ struct ClipperView: View {
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("License & Settings")
+                    .help("Settings")
                     
                     Spacer()
                 }
@@ -200,28 +202,33 @@ struct ClipperView: View {
                         .foregroundStyle(.secondary)
                         .padding(.top, 8)
                     }
+                } else if isProcessing {
+                    // Processing loader
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                            .tint(.primary)
+                        
+                        Text("Processing...")
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 16)
                 } else {
                     // Download/Process button
                     Button(action: processVideo) {
                         HStack(spacing: 8) {
-                            if isProcessing {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                    .tint(.white)
-                                Text("Processing...")
-                            } else {
-                                Image(systemName: "scissors")
-                                Text("Clip Video")
-                            }
+                            Image(systemName: "scissors")
+                            Text("Clip Video")
                         }
                     }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(urlText.isEmpty || isProcessing)
+                    .disabled(urlText.isEmpty)
                 }
             }
         }
         .padding(40)
-        .frame(width: 500, height: 400)
+        .frame(width: 500, height: 450)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         .sheet(isPresented: $showingLicenseView) {
             LicenseStatusView()

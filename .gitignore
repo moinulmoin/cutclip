@@ -128,3 +128,6 @@ cutclip.xcodeproj/xcshareddata/xcschemes/cutclip.xcscheme
 
 # User-specific scheme management
 cutclip.xcodeproj/xcuserdata/*/xcschemes/xcschememanagement.plist
+
+build-release.sh
+*.dmg

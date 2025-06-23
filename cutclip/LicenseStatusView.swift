@@ -11,40 +11,49 @@ struct LicenseStatusView: View {
     @EnvironmentObject private var licenseManager: LicenseManager
     @EnvironmentObject private var usageTracker: UsageTracker
     @EnvironmentObject private var errorHandler: ErrorHandler
+    @Environment(\.dismiss) private var dismiss
     
     @State private var licenseKey = ""
     @State private var showingLicenseEntry = false
     
     var body: some View {
-        VStack(spacing: 20) {
-            // App Logo/Title
-            VStack(spacing: 8) {
-                Image(systemName: "scissors.badge.ellipsis")
-                    .font(.system(size: 48))
-                    .foregroundColor(.accentColor)
+        VStack(spacing: 24) {
+            // Header with close button
+            HStack {
+                Text("Settings")
+                    .font(.headline)
                 
-                Text("CutClip")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-            }
-            
-            Spacer()
-            
-            // License Status Card
-            VStack(spacing: 16) {
-                statusCard
+                Spacer()
                 
-                if case .trialExpired = usageTracker.getUsageStatus() {
-                    licenseEntrySection
-                } else {
-                    continueButton
+                Button("Close") {
+                    dismiss()
                 }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
             }
-            .frame(maxWidth: 400)
             
-            Spacer()
+            // Status section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Status")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                
+                statusCard
+            }
+            
+            // License section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("License")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                
+                licenseEntrySection
+            }
         }
-        .padding(40)
+        .padding(24)
+        .frame(width: 400)
         .task {
             await licenseManager.refreshLicenseStatus()
         }
@@ -52,37 +61,25 @@ struct LicenseStatusView: View {
     
     @ViewBuilder
     private var statusCard: some View {
-        VStack(spacing: 12) {
-            HStack {
-                statusIcon
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(statusTitle)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    
-                    Text(statusMessage)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
+        HStack(spacing: 8) {
+            statusIcon
+            Text(statusTitle)
+                .font(.callout)
+                .fontWeight(.medium)
             
             if case .freeTrial(let remaining) = usageTracker.getUsageStatus() {
-                HStack {
-                    Text("Remaining Uses:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("\(remaining)")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(remaining <= 1 ? .orange : .primary)
-                }
+                Text("•")
+                    .foregroundColor(.secondary)
+                Text("\(remaining) uses left")
+                    .font(.callout)
+                    .foregroundColor(remaining <= 1 ? .orange : .secondary)
             }
+            
+            Spacer()
         }
-        .padding(16)
+        .padding(12)
         .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
+        .cornerRadius(6)
     }
     
     @ViewBuilder
@@ -128,14 +125,9 @@ struct LicenseStatusView: View {
     @ViewBuilder
     private var licenseEntrySection: some View {
         VStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Enter License Key")
-                    .font(.headline)
-                
-                TextField("PRO-XXXXX-XXXXX", text: $licenseKey)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-            }
+            TextField("PRO-XXXXX-XXXXX", text: $licenseKey)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
             
             HStack(spacing: 12) {
                 Button("Get License") {
@@ -145,7 +137,7 @@ struct LicenseStatusView: View {
                 }
                 .buttonStyle(.bordered)
                 
-                Button("Activate License") {
+                Button("Activate") {
                     Task {
                         await activateLicense()
                     }
@@ -155,22 +147,13 @@ struct LicenseStatusView: View {
             }
             
             if licenseManager.isLoading {
-                ProgressView("Validating license...")
+                ProgressView("Validating...")
                     .controlSize(.small)
             }
         }
         .padding(16)
-        .background(Color(NSColor.separatorColor).opacity(0.1))
+        .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(8)
-    }
-    
-    @ViewBuilder
-    private var continueButton: some View {
-        Button("Continue") {
-            licenseManager.needsLicenseSetup = false
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
     }
     
     private func activateLicense() async {
@@ -179,6 +162,7 @@ struct LicenseStatusView: View {
         
         if success {
             licenseKey = ""
+            dismiss()
         }
     }
 }

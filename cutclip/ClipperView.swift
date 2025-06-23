@@ -22,28 +22,52 @@ struct ClipperView: View {
     @State private var processingProgress: Double = 0.0
     @State private var processingMessage = "Starting..."
     @State private var completedVideoPath: String?
+    @State private var showingLicenseView = false
 
     let qualityOptions = ["360p", "480p", "720p", "1080p", "Best"]
     
     @ViewBuilder
     private var usageStatusIndicator: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             switch usageTracker.getUsageStatus() {
             case .licensed:
-                Image(systemName: "checkmark.seal.fill")
-                    .foregroundColor(.green)
-                Text("Licensed")
-                    .foregroundColor(.green)
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundColor(.green)
+                    Text("Licensed")
+                        .foregroundColor(.green)
+                }
             case .freeTrial(let remaining):
-                Image(systemName: "gift.fill")
-                    .foregroundColor(.blue)
-                Text("\(remaining) uses left")
-                    .foregroundColor(remaining <= 1 ? .orange : .blue)
+                HStack(spacing: 6) {
+                    Image(systemName: "gift.fill")
+                        .foregroundColor(.blue)
+                    Text("\(remaining) uses left")
+                        .foregroundColor(remaining <= 1 ? .orange : .blue)
+                }
+                
+                if remaining <= 1 {
+                    Button("Upgrade") {
+                        showingLicenseView = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .foregroundColor(.orange)
+                }
+                
             case .trialExpired:
-                Image(systemName: "exclamationmark.triangle.fill")
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("Trial expired")
+                        .foregroundColor(.orange)
+                    
+                    Button("Get License") {
+                        showingLicenseView = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
                     .foregroundColor(.orange)
-                Text("Trial expired")
-                    .foregroundColor(.orange)
+                }
             }
         }
         .font(.caption)
@@ -52,13 +76,34 @@ struct ClipperView: View {
 
     var body: some View {
         VStack(spacing: 32) {
-            // Title with usage status
-            VStack(spacing: 8) {
-                Text("CutClip")
-                    .font(.system(size: 28, weight: .light, design: .rounded))
-                    .foregroundStyle(.primary)
+            // Header with title and settings button
+            HStack {
+                Spacer()
                 
-                usageStatusIndicator
+                VStack(spacing: 8) {
+                    Text("CutClip")
+                        .font(.system(size: 28, weight: .light, design: .rounded))
+                        .foregroundStyle(.primary)
+                    
+                    usageStatusIndicator
+                }
+                
+                Spacer()
+                
+                // Settings/License button
+                VStack {
+                    Button(action: {
+                        showingLicenseView = true
+                    }) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("License & Settings")
+                    
+                    Spacer()
+                }
             }
 
             VStack(spacing: 24) {
@@ -178,6 +223,12 @@ struct ClipperView: View {
         .padding(40)
         .frame(width: 500, height: 400)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .sheet(isPresented: $showingLicenseView) {
+            LicenseStatusView()
+                .environmentObject(licenseManager)
+                .environmentObject(usageTracker)
+                .environmentObject(errorHandler)
+        }
     }
 
     private func processVideo() {

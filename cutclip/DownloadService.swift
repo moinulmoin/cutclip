@@ -310,39 +310,39 @@ enum DownloadError: LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .binaryNotFound(let message):
-            return "Binary not found: \(message)"
+        case .binaryNotFound(_):
+            return "Setup required. Please configure required tools in Settings."
         case .invalidURL:
-            return "Invalid YouTube URL"
-        case .downloadFailed(let message):
-            return "Download failed: \(message)"
-        case .processError(let message):
-            return "Process error: \(message)"
+            return "Invalid YouTube URL. Please check the link and try again."
+        case .downloadFailed(_):
+            return "Video download failed. This video may be restricted."
+        case .processError(_):
+            return "Video download failed. This video may be restricted."
         case .fileNotFound:
-            return "Downloaded file not found"
-        case .networkError(let message):
-            return "Network error: \(message)"
-        case .diskSpaceError(let message):
-            return "Disk space error: \(message)"
+            return "Video download failed. This video may be restricted."
+        case .networkError(_):
+            return "No internet connection. CutClip requires internet."
+        case .diskSpaceError(_):
+            return "Unable to download video. Please check your disk space."
         }
     }
 
     func toAppError() -> AppError {
         switch self {
-        case .binaryNotFound(let message):
-            return .binaryNotFound(message)
+        case .binaryNotFound(_):
+            return .binaryNotFound("Setup required. Please configure required tools in Settings.")
         case .invalidURL:
-            return .invalidInput("Invalid YouTube URL format")
-        case .downloadFailed(let message):
-            return .downloadFailed(message)
-        case .processError(let message):
-            return .downloadFailed(message)
+            return .invalidInput("Invalid YouTube URL. Please check the link and try again.")
+        case .downloadFailed(_):
+            return .downloadFailed("Video download failed. This video may be restricted.")
+        case .processError(_):
+            return .downloadFailed("Video download failed. This video may be restricted.")
         case .fileNotFound:
-            return .fileSystem("Downloaded file not found")
-        case .networkError(let message):
-            return .network(message)
-        case .diskSpaceError(let message):
-            return .diskSpace(message)
+            return .downloadFailed("Video download failed. This video may be restricted.")
+        case .networkError(_):
+            return .network("No internet connection. CutClip requires internet.")
+        case .diskSpaceError(_):
+            return .diskSpace("Unable to download video. Please check your disk space.")
         }
     }
 }

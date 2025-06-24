@@ -131,3 +131,5 @@ cutclip.xcodeproj/xcuserdata/*/xcschemes/xcschememanagement.plist
 
 build-release.sh
 *.dmg
+
+DISTRIBUTION_GUIDE.md

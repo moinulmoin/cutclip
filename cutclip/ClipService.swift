@@ -275,43 +275,43 @@ enum ClipError: LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .binaryNotFound(let message):
-            return "Binary not found: \(message)"
-        case .clippingFailed(let message):
-            return "Clipping failed: \(message)"
-        case .processError(let message):
-            return "Process error: \(message)"
+        case .binaryNotFound(_):
+            return "Setup required. Please configure required tools in Settings."
+        case .clippingFailed(_):
+            return "Video processing failed. This video may be restricted."
+        case .processError(_):
+            return "Video processing failed. This video may be restricted."
         case .outputFileNotFound:
-            return "Output file was not created"
+            return "Unable to save video. Please check your disk space."
         case .invalidTimeFormat:
-            return "Invalid time format. Use HH:MM:SS"
+            return "Start and end times must be in HH:MM:SS format."
         case .endTimeBeforeStartTime:
-            return "End time must be after start time"
-        case .diskSpaceError(let message):
-            return "Disk space error: \(message)"
-        case .fileSystemError(let message):
-            return "File system error: \(message)"
+            return "End time must be after start time."
+        case .diskSpaceError(_):
+            return "Unable to save video. Please check your disk space."
+        case .fileSystemError(_):
+            return "Unable to save video. Please check your disk space."
         }
     }
 
     func toAppError() -> AppError {
         switch self {
-        case .binaryNotFound(let message):
-            return .binaryNotFound(message)
-        case .clippingFailed(let message):
-            return .clippingFailed(message)
-        case .processError(let message):
-            return .clippingFailed(message)
+        case .binaryNotFound(_):
+            return .binaryNotFound("Setup required. Please configure required tools in Settings.")
+        case .clippingFailed(_):
+            return .clippingFailed("Video processing failed. This video may be restricted.")
+        case .processError(_):
+            return .clippingFailed("Video processing failed. This video may be restricted.")
         case .outputFileNotFound:
-            return .fileSystem("Output file was not created")
+            return .fileSystem("Unable to save video. Please check your disk space.")
         case .invalidTimeFormat:
-            return .invalidInput("Invalid time format. Use HH:MM:SS")
+            return .invalidInput("Start and end times must be in HH:MM:SS format.")
         case .endTimeBeforeStartTime:
-            return .invalidInput("End time must be after start time")
-        case .diskSpaceError(let message):
-            return .diskSpace(message)
-        case .fileSystemError(let message):
-            return .fileSystem(message)
+            return .invalidInput("End time must be after start time.")
+        case .diskSpaceError(_):
+            return .diskSpace("Unable to save video. Please check your disk space.")
+        case .fileSystemError(_):
+            return .fileSystem("Unable to save video. Please check your disk space.")
         }
     }
 }

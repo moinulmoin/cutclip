@@ -67,10 +67,27 @@ class DeviceRegistrationService: ObservableObject {
             }
 
         } catch {
-            let errorMessage = "Registration failed: \(error.localizedDescription)"
-            registrationError = errorMessage
-            print("❌ Device registration error: \(errorMessage)")
-            return .failure(errorMessage)
+            let userFriendlyError: String
+            if error is URLError {
+                userFriendlyError = "No internet connection. CutClip requires internet."
+            } else if let apiError = error as? APIError {
+                switch apiError {
+                case .httpError(let statusCode):
+                    if statusCode >= 500 {
+                        userFriendlyError = "Server temporarily unavailable. Please try again in a moment."
+                    } else {
+                        userFriendlyError = "Request failed. Please check your connection and retry."
+                    }
+                default:
+                    userFriendlyError = "Request failed. Please check your connection and retry."
+                }
+            } else {
+                userFriendlyError = "Request failed. Please check your connection and retry."
+            }
+            
+            registrationError = userFriendlyError
+            print("❌ Device registration error: \(error.localizedDescription)")
+            return .failure(userFriendlyError)
         }
     }
 

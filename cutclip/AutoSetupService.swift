@@ -56,7 +56,13 @@ class AutoSetupService: ObservableObject, Sendable {
 
         } catch {
             await MainActor.run {
-                self.setupError = error.localizedDescription
+                if error is URLError {
+                    self.setupError = "Unable to download required tools. Please check your internet connection and try again."
+                } else if error.localizedDescription.contains("space") {
+                    self.setupError = "Setup failed. Please ensure you have sufficient disk space and try again."
+                } else {
+                    self.setupError = "Download interrupted. Click 'Try Again' to continue setup."
+                }
             }
         }
     }

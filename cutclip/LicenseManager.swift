@@ -79,7 +79,16 @@ class LicenseManager: ObservableObject {
             return true
 
         case .failure(let error):
-            errorMessage = error
+            // Map generic errors to user-friendly license errors
+            if error.contains("already used") {
+                errorMessage = "License already in use on another device. Contact support if needed."
+            } else if error.contains("invalid") || error.contains("not found") {
+                errorMessage = "Invalid license key. Please check and try again."
+            } else if error.contains("internet") || error.contains("connection") {
+                errorMessage = "Unable to verify license. Check your internet connection."
+            } else {
+                errorMessage = "Unable to verify license. Check your internet connection."
+            }
             return false
         }
     }

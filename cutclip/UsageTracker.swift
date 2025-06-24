@@ -434,19 +434,26 @@ enum UsageError: Error, LocalizedError {
     case serverError(Int)
     case decodingError
     case insufficientCredits(String)
+    case networkError
 
     var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "Invalid API URL"
+            return "Request failed. Please check your connection and retry."
         case .invalidResponse:
-            return "Invalid server response"
+            return "Server temporarily unavailable. Please try again in a moment."
         case .serverError(let code):
-            return "Server error: \(code)"
+            if code >= 500 {
+                return "Server temporarily unavailable. Please try again in a moment."
+            } else {
+                return "Request failed. Please check your connection and retry."
+            }
         case .decodingError:
-            return "Failed to decode response"
-        case .insufficientCredits(let message):
-            return "Insufficient credits: \(message)"
+            return "Server temporarily unavailable. Please try again in a moment."
+        case .insufficientCredits(_):
+            return "Free clips used up. Enter a license key for unlimited clipping."
+        case .networkError:
+            return "No internet connection. CutClip requires internet."
         }
     }
 }

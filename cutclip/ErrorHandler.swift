@@ -58,16 +58,74 @@ class ErrorHandler: ObservableObject {
             let (_, response) = try await URLSession.shared.data(for: request)
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode != 200 {
-                    throw AppError.network("Network connectivity issue (Status: \(httpResponse.statusCode))")
+                    throw AppError.network("Server temporarily unavailable. Please try again in a moment.")
                 }
             }
         } catch {
             if error is AppError {
                 throw error
             } else {
-                throw AppError.network("No internet connection or YouTube is unreachable")
+                throw AppError.network("No internet connection. CutClip requires internet.")
             }
         }
+    }
+    
+    // MARK: - User-Friendly Error Helpers
+    
+    nonisolated static func createNoInternetError() -> AppError {
+        return AppError.network("No internet connection. CutClip requires internet.")
+    }
+    
+    nonisolated static func createConnectionLostError() -> AppError {
+        return AppError.network("Connection lost. Please check your internet and try again.")
+    }
+    
+    nonisolated static func createServerError() -> AppError {
+        return AppError.network("Server temporarily unavailable. Please try again in a moment.")
+    }
+    
+    nonisolated static func createRequestFailedError() -> AppError {
+        return AppError.network("Request failed. Please check your connection and retry.")
+    }
+    
+    nonisolated static func createInvalidLicenseError() -> AppError {
+        return AppError.licenseError("Invalid license key. Please check and try again.")
+    }
+    
+    nonisolated static func createLicenseInUseError() -> AppError {
+        return AppError.licenseError("License already in use on another device. Contact support if needed.")
+    }
+    
+    nonisolated static func createLicenseVerificationError() -> AppError {
+        return AppError.licenseError("Unable to verify license. Check your internet connection.")
+    }
+    
+    nonisolated static func createFreeCreditsExhaustedError() -> AppError {
+        return AppError.licenseError("Free clips used up. Enter a license key for unlimited clipping.")
+    }
+    
+    nonisolated static func createInvalidURLError() -> AppError {
+        return AppError.invalidInput("Invalid YouTube URL. Please check the link and try again.")
+    }
+    
+    nonisolated static func createVideoProcessingError() -> AppError {
+        return AppError.clippingFailed("Video processing failed. This video may be restricted.")
+    }
+    
+    nonisolated static func createVideoSaveError() -> AppError {
+        return AppError.fileSystem("Unable to save video. Please check your disk space.")
+    }
+    
+    nonisolated static func createSetupDownloadError() -> AppError {
+        return AppError.downloadFailed("Unable to download required tools. Please check your internet connection and try again.")
+    }
+    
+    nonisolated static func createSetupInterruptedError() -> AppError {
+        return AppError.downloadFailed("Download interrupted. Click 'Try Again' to continue setup.")
+    }
+    
+    nonisolated static func createSetupDiskSpaceError() -> AppError {
+        return AppError.diskSpace("Setup failed. Please ensure you have sufficient disk space and try again.")
     }
     
     nonisolated static func validateTimeInputs(startTime: String, endTime: String) throws {

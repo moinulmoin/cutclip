@@ -6,14 +6,12 @@
 //
 
 import SwiftUI
-import Sparkle
 
 @main
 struct cutclipApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(UpdateManager.shared)
                 .onAppear {
                     #if DEBUG
                     // Debug: Verify environment variables

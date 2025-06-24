@@ -11,7 +11,6 @@ struct LicenseStatusView: View {
     @EnvironmentObject private var licenseManager: LicenseManager
     @EnvironmentObject private var usageTracker: UsageTracker
     @EnvironmentObject private var errorHandler: ErrorHandler
-    @EnvironmentObject private var updateManager: UpdateManager
     @Environment(\.dismiss) private var dismiss
 
     @State private var licenseKey = ""

@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import Sparkle
 
 struct ClipperView: View {
     @State private var urlText = ""
@@ -18,7 +17,6 @@ struct ClipperView: View {
     @EnvironmentObject private var errorHandler: ErrorHandler
     @EnvironmentObject private var licenseManager: LicenseManager
     @EnvironmentObject private var usageTracker: UsageTracker
-    @EnvironmentObject private var updateManager: UpdateManager
 
     @State private var isProcessing = false
     @State private var processingProgress: Double = 0.0

@@ -6,10 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		E63D60552E09E14700DFAA95 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E63D60542E09E14700DFAA95 /* Sparkle */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXFileReference section */
 		E60C77FE2E071FCE0030C832 /* cutclip.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = cutclip.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -27,7 +23,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E63D60552E09E14700DFAA95 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -70,7 +65,6 @@
 			);
 			name = cutclip;
 			packageProductDependencies = (
-				E63D60542E09E14700DFAA95 /* Sparkle */,
 			);
 			productName = cutclip;
 			productReference = E60C77FE2E071FCE0030C832 /* cutclip.app */;
@@ -101,7 +95,6 @@
 			mainGroup = E60C77F52E071FCE0030C832;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				E63D60532E09E14700DFAA95 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E60C77FF2E071FCE0030C832 /* Products */;
@@ -340,25 +333,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		E63D60532E09E14700DFAA95 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.7.1;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		E63D60542E09E14700DFAA95 /* Sparkle */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E63D60532E09E14700DFAA95 /* XCRemoteSwiftPackageReference "Sparkle" */;
-			productName = Sparkle;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E60C77F62E071FCE0030C832 /* Project object */;
 }

@@ -15,57 +15,66 @@ struct DisclaimerView: View {
         ScrollView {
             VStack(spacing: 32) {
             // Header
-            VStack(spacing: 16) {
+            VStack(spacing: 20) {
                 Image("AppLogo")
                     .resizable()
-                    .frame(width: 48, height: 48)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                     .scaleEffect(showContent ? 1.0 : 0.5)
                     .animation(.bouncy(duration: 0.8).delay(0.2), value: showContent)
                 
-                Text("Important Notice")
-                    .font(.largeTitle.weight(.bold))
-                    .foregroundStyle(.primary)
-                    .opacity(showContent ? 1.0 : 0.0)
-                    .animation(.easeInOut(duration: 0.6).delay(0.4), value: showContent)
+                VStack(spacing: 8) {
+                    Text("Welcome to CutClip!")
+                        .font(.largeTitle.weight(.bold))
+                        .foregroundStyle(.primary)
+                    
+                    Text("Your YouTube video clipping companion")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .opacity(showContent ? 1.0 : 0.0)
+                .animation(.easeInOut(duration: 0.6).delay(0.4), value: showContent)
             }
             
             // Content
-            VStack(alignment: .leading, spacing: 20) {
-                Text("This app downloads and uses video processing tools to clip videos.")
-                    .font(.title3.weight(.medium))
+            VStack(spacing: 24) {
+                Text("Let's get you set up! First, here's what you need to know:")
+                    .font(.title3)
                     .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
                     .opacity(showContent ? 1.0 : 0.0)
                     .animation(.easeInOut(duration: 0.6).delay(0.6), value: showContent)
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("By using this app, you acknowledge that:")
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(.secondary)
+                VStack(spacing: 16) {
+                    DisclaimerPoint(
+                        icon: "checkmark.shield.fill",
+                        text: "You're responsible for following YouTube's Terms of Service",
+                        delay: 0.8
+                    )
                     
-                    VStack(alignment: .leading, spacing: 8) {
-                        DisclaimerPoint(
-                            icon: "checkmark.shield.fill",
-                            text: "You are responsible for compliance with YouTube's Terms of Service",
-                            delay: 0.8
-                        )
-                        
-                        DisclaimerPoint(
-                            icon: "person.fill.checkmark",
-                            text: "You will only download content you have permission to download",
-                            delay: 1.0
-                        )
-                        
-                        DisclaimerPoint(
-                            icon: "hand.raised.fill",
-                            text: "The developers are not responsible for how you use this tool",
-                            delay: 1.2
-                        )
-                    }
+                    DisclaimerPoint(
+                        icon: "person.fill.checkmark",
+                        text: "Only download content you have permission to use",
+                        delay: 1.0
+                    )
+                    
+                    DisclaimerPoint(
+                        icon: "heart.fill",
+                        text: "Use this tool responsibly and respect creators' rights",
+                        delay: 1.2
+                    )
                 }
             }
             .opacity(showContent ? 1.0 : 0.0)
             .animation(.easeInOut(duration: 0.6).delay(0.8), value: showContent)
+
+            // Terms Agreement
+            Text("By continuing, you agree to our [Terms and Conditions](https://cutclip.moinulmoin.com/terms) and [Privacy Policy](https://cutclip.moinulmoin.com/privacy)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .opacity(showContent ? 1.0 : 0.0)
+                .animation(.easeInOut(duration: 0.6).delay(1.2), value: showContent)
 
             // Accept Button
             Button("I Understand and Accept") {
@@ -79,10 +88,9 @@ struct DisclaimerView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.black.gradient)
             )
-            .scaleEffect(showContent ? 1.0 : 0.8)
-            .opacity(showContent ? 1.0 : 0.0)
-            .animation(.bouncy(duration: 0.8).delay(1.4), value: showContent)
             .buttonStyle(.plain)
+            .opacity(showContent ? 1.0 : 0.0)
+            .animation(.easeInOut(duration: 0.6).delay(1.4), value: showContent)
             }
         }
         .padding(40)

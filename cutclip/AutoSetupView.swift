@@ -15,34 +15,35 @@ struct AutoSetupView: View {
     @State private var showContent = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 40) {
-            // Header Section
-            VStack(spacing: 20) {
-                // Animated App Icon
-                Image("AppLogo")
-                    .resizable()
-                    .frame(width: 80, height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .scaleEffect(animateIcon ? 1.0 : 0.9)
-                    .rotationEffect(.degrees(animateIcon ? 3 : -3))
-                    .animation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true), value: animateIcon)
-                .opacity(showContent ? 1.0 : 0.0)
-                .scaleEffect(showContent ? 1.0 : 0.5)
-                .animation(.bouncy(duration: 0.8).delay(0.2), value: showContent)
+        VStack(spacing: 40) {
+            // Header Section - only show when not complete
+            if !setupService.isSetupComplete {
+                VStack(spacing: 20) {
+                    // Animated App Icon
+                    Image("AppLogo")
+                        .resizable()
+                        .frame(width: 80, height: 80)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .scaleEffect(animateIcon ? 1.0 : 0.9)
+                        .rotationEffect(.degrees(animateIcon ? 3 : -3))
+                        .animation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true), value: animateIcon)
+                    .opacity(showContent ? 1.0 : 0.0)
+                    .scaleEffect(showContent ? 1.0 : 0.5)
+                    .animation(.bouncy(duration: 0.8).delay(0.2), value: showContent)
 
-                VStack(spacing: 8) {
-                    Text("Setting up CutClip")
-                        .font(.title.weight(.bold))
-                        .foregroundStyle(.primary)
+                    VStack(spacing: 8) {
+                        Text("Setting up CutClip")
+                            .font(.title.weight(.bold))
+                            .foregroundStyle(.primary)
 
-                    Text("Almost ready to clip some bangers!")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        Text("Almost ready to clip some bangers!")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .opacity(showContent ? 1.0 : 0.0)
+                    .offset(y: showContent ? 0 : 20)
+                    .animation(.easeInOut(duration: 0.6).delay(0.4), value: showContent)
                 }
-                .opacity(showContent ? 1.0 : 0.0)
-                .offset(y: showContent ? 0 : 20)
-                .animation(.easeInOut(duration: 0.6).delay(0.4), value: showContent)
             }
 
             // Content Section
@@ -80,10 +81,8 @@ struct AutoSetupView: View {
                     )
                 }
             }
-            }
         }
         .padding(40)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         .frame(width: 500, height: 450)
         .onAppear {
             animateIcon = true
@@ -178,47 +177,40 @@ struct SetupCompleteView: View {
 
     var body: some View {
         VStack(spacing: 40) {
-            // Header Section
-            VStack(spacing: 20) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 48))
-                    .foregroundStyle(LinearGradient(colors: [.green.opacity(0.8), .green], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .scaleEffect(showSuccess ? 1.0 : 0.5)
-                    .animation(.bouncy(duration: 0.8), value: showSuccess)
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(LinearGradient(colors: [.green.opacity(0.8), .green], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .scaleEffect(showSuccess ? 1.0 : 0.5)
+                .animation(.bouncy(duration: 0.8), value: showSuccess)
 
-                VStack(spacing: 8) {
-                    Text("All set!")
-                        .font(.largeTitle.weight(.bold))
-                        .foregroundStyle(.primary)
+            VStack(spacing: 8) {
+                Text("All set!")
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundStyle(.primary)
 
-                    Text("Ready to start clipping!")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                }
-                .opacity(showSuccess ? 1.0 : 0.0)
-                .animation(.easeInOut(duration: 0.6).delay(0.3), value: showSuccess)
+                Text("Ready to start clipping!")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
             }
+            .opacity(showSuccess ? 1.0 : 0.0)
+            .animation(.easeInOut(duration: 0.6).delay(0.3), value: showSuccess)
 
-            // Content Section
-            VStack(spacing: 24) {
-                VStack(spacing: 16) {
-                    Button("Continue") {
-                        onContinue()
-                    }
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(LinearGradient(colors: [.green.opacity(0.8), .green], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    )
-                    .buttonStyle(.plain)
-                }
-                .opacity(showSuccess ? 1.0 : 0.0)
-                .animation(.easeInOut(duration: 0.6).delay(0.6), value: showSuccess)
+            Button("Continue") {
+                onContinue()
             }
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(LinearGradient(colors: [.green.opacity(0.8), .green], startPoint: .topLeading, endPoint: .bottomTrailing))
+            )
+            .buttonStyle(.plain)
+            .opacity(showSuccess ? 1.0 : 0.0)
+            .animation(.easeInOut(duration: 0.6).delay(0.6), value: showSuccess)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             showSuccess = true
         }

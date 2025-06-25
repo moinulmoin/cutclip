@@ -15,14 +15,14 @@ macOS app (Swift 6.0, macOS 14.6+) for YouTube video clipping using external bin
 4. Video download (yt-dlp) → Clip (ffmpeg) → Save to Downloads
 
 ## Key Services
-- [UsageTracker.swift](mdc:cutclip/UsageTracker.swift) - API communication & credit management
-- [LicenseManager.swift](mdc:cutclip/LicenseManager.swift) - License validation
+- [UsageTracker.swift](mdc:cutclip/UsageTracker.swift) - The sole service for all backend API communication, credit management, and device status.
+- [LicenseManager.swift](mdc:cutclip/LicenseManager.swift) - The UI's source of truth for license state. Orchestrates UsageTracker.
 - [BinaryManager.swift](mdc:cutclip/BinaryManager.swift) - yt-dlp/ffmpeg management
 - [ClipService.swift](mdc:cutclip/ClipService.swift) - Video processing
 - [DownloadService.swift](mdc:cutclip/DownloadService.swift) - YouTube downloading
 
 ## API Integration
-Backend at `https://appdomain.com/api` - see [USER_API_DOCS.md](mdc:USER_API_DOCS.md)
+Backend at `https://cutclip.moinulmoin.com/api` - see [USER_API_DOCS.md](mdc:USER_API_DOCS.md)
 - Device-based registration
 - Credit system for free users
 - License activation creates user account

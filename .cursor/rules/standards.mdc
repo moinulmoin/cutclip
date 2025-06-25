@@ -13,21 +13,20 @@ alwaysApply: true
 
 ## Best Practices
 - NO sensitive data in logs (license keys, etc.)
-- Process output → stderr for progress tracking
+- `ffmpeg` process `stderr` is used for accurate progress tracking.
 - Cleanup temporary files after operations
 - Graceful API degradation when offline
 - Input validation before processing (time format: HH:MM:SS)
 
 ## API Patterns
 ```swift
-func apiCall() async throws -> Response {
-    guard let deviceId = DeviceIdentifier.shared.getDeviceIdentifier() else {
-        throw UsageError.noDeviceId
+func someApiCall() async throws -> SomeResponse {
+    // ... setup ...
+    return try await NetworkRetryHelper.retryOperation {
+        let request = APIConfiguration.createRequest(url: url)
+        let (data, response) = try await APIConfiguration.performSecureRequest(request)
+        // ... handle response and errors ...
+        return try JSONDecoder().decode(SomeResponse.self, from: data)
     }
-    isLoading = true
-    defer { isLoading = false }
-
-    let (data, response) = try await URLSession.shared.data(from: url)
-    // Handle response...
 }
 ```

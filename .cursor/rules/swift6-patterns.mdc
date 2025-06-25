@@ -29,6 +29,6 @@ class Service: ObservableObject {
 - Errors conform to both **LocalizedError** and **Sendable**
 
 ## Data Flow
-- Device ID: Hardware UUID → SHA256 → Keychain cache
-- License: API → Keychain storage → Local validation
+- Device ID: Hardware UUID → SHA256 → `UserDefaults` cache.
+- License: API → Keychain storage → Local validation.
 - Binaries: Auto-download → ~/Library/Application Support/CutClip/bin/

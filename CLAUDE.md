@@ -59,31 +59,27 @@ The app follows a strict onboarding sequence managed by `ContentView`:
 
 **BinaryManager**: Manages yt-dlp and FFmpeg binaries in `~/Library/Application Support/CutClip/bin/`. Auto-detects existing installations and handles path management.
 
-**LicenseManager**: Central license and usage coordination. Integrates with `UsageTracker`, `DeviceRegistrationService`, and backend API. Determines `needsLicenseSetup` state.
+**LicenseManager**: Central license and usage coordinator. It's the UI's source of truth for all license and credit-related state. It orchestrates `UsageTracker` to perform backend operations.
 
-**UsageTracker**: Manages free credits (3 per device) and usage tracking. Communicates with backend API for credit decrements and device registration.
-
-**DeviceRegistrationService**: Handles device registration and license validation with backend API. See `USER_API_DOCS.md` for complete API reference.
+**UsageTracker**: The sole service responsible for all backend API communication. It handles device status checks, license validation, and credit management with built-in caching and retry logic.
 
 **ClipService**: Orchestrates video clipping by coordinating `BinaryManager` (binaries), `DownloadService` (yt-dlp), and FFmpeg processing.
 
-**UpdateManager**: Sparkle auto-update integration. Currently disabled for v1.0 (`startingUpdater: false`). Enable in v1.1 by changing to `true` and uncommenting update UI.
-
 ### Environment Configuration
 ```bash
-# API endpoint (defaults to localhost:3000)
-export CUTCLIP_API_BASE_URL="https://your-api-domain.com"
+# API endpoint (defaults to production URL)
+export CUTCLIP_API_BASE_URL="https://cutclip.moinulmoin.com/api"
 ```
 
 ### Design System
-- **Window Size**: 500×450px (main windows), 440×400px (modals)
+- **Window Size**: 500×450px (main windows), 420×450px (modals)
 - **Padding**: 40px standard, 24px for modals
 - **Corner Radius**: 8px for UI elements, 16px for window backgrounds
-- **Colors**: Black theme throughout (no purple gradients)
+- **Colors**: Black theme throughout
 - **Materials**: `.regularMaterial` for window backgrounds
 
 ### Dependencies
-- **Sparkle**: Auto-update framework (GitHub package)
+- **Sparkle**: Auto-update framework (GitHub package) - Currently disabled
 - **create-dmg**: DMG creation tool (Homebrew)
 - **yt-dlp & FFmpeg**: Downloaded automatically by `AutoSetupService`
 
@@ -91,13 +87,41 @@ export CUTCLIP_API_BASE_URL="https://your-api-domain.com"
 
 The app integrates with a REST API for license management and usage tracking. Key endpoints:
 
-- `GET /api/users/check-device` - Check device registration status
-- `POST /api/users/create-device` - Register new device
-- `GET /api/validate-license` - Validate license key
-- `PUT /api/users/update-device` - Link device to license
-- `PUT /api/users/decrement-free-credits` - Use free credit
+- `GET /users/check-device`
+- `POST /users/create-device`
+- `PUT /users/update-device`
+- `PUT /users/decrement-free-credits`
+- `POST /validate-license`
 
 See `USER_API_DOCS.md` for complete API documentation and flow diagrams.
+
+## Key Implementation Notes & Patterns
+
+### API Calls
+All API calls are consolidated in `UsageTracker.swift` and use a robust pattern with secure networking and automatic retries.
+
+```swift
+// In UsageTracker.swift
+func someApiCall() async throws -> SomeResponse {
+    // ... setup ...
+    return try await NetworkRetryHelper.retryOperation {
+        let request = APIConfiguration.createRequest(url: url)
+        let (data, response) = try await APIConfiguration.performSecureRequest(request)
+        // ... handle response and errors ...
+        return try JSONDecoder().decode(SomeResponse.self, from: data)
+    }
+}
+```
+
+### Process Management
+- **Security**: External processes (`yt-dlp`, `ffmpeg`) are executed with a restricted environment (minimal `PATH`, sandboxed `HOME`) to prevent exploits.
+- **Progress Tracking**: `ffmpeg`'s `stderr` output is parsed in real-time to provide accurate, duration-based progress for clipping operations.
+- **Temporary Files**: `DownloadService` downloads videos to a temporary directory and schedules cleanup to avoid leaving artifacts.
+
+### Data Flow
+- **Device ID**: Hardware UUID → SHA256 → `UserDefaults` cache.
+- **License**: API → Keychain storage (`SecureStorage`) → `LicenseManager` state.
+- **Binaries**: Auto-download → `~/Library/Application Support/CutClip/bin/`.
 
 ## File Organization
 
@@ -108,11 +132,3 @@ See `USER_API_DOCS.md` for complete API documentation and flow diagrams.
 **Models**: `ClipJob.swift` for video processing data structures.
 
 **Utilities**: `DeviceIdentifier`, `SecureStorage`, `NetworkMonitor`, `ErrorHandler` for cross-cutting concerns.
-
-## Key Implementation Notes
-
-- All UI uses consistent sizing (500×450px) with ScrollView for overflow
-- Environment objects are passed down from `ContentView` to child views
-- Binary downloads are handled automatically with user-friendly progress messages
-- License validation happens before device linking to prevent conflicts
-- App state is managed through Published properties and @AppStorage for persistence

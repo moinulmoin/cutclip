@@ -26,14 +26,13 @@ struct ClipperView: View {
 
     // Task management
     @State private var processingTask: Task<Void, Never>?
-    @State private var refreshTask: Task<Void, Never>?
 
     let qualityOptions = ["360p", "480p", "720p", "1080p", "Best"]
 
     @ViewBuilder
     private var usageStatusIndicator: some View {
         HStack(spacing: 8) {
-            switch usageTracker.getUsageStatus() {
+            switch licenseManager.licenseStatus {
             case .licensed:
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.seal.fill")
@@ -58,7 +57,7 @@ struct ClipperView: View {
                     .foregroundColor(.orange)
                 }
 
-            case .trialExpired:
+            case .trialExpired, .unlicensed:
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
@@ -72,6 +71,9 @@ struct ClipperView: View {
                     .controlSize(.mini)
                     .foregroundColor(.orange)
                 }
+            case .unknown:
+                ProgressView()
+                    .scaleEffect(0.6)
             }
         }
         .font(.caption)
@@ -237,54 +239,9 @@ struct ClipperView: View {
                 .environmentObject(usageTracker)
                 .environmentObject(errorHandler)
         }
-        .onAppear {
-            // Cancel any existing refresh task
-            refreshTask?.cancel()
-
-            // Only refresh usage data - license status is updated separately when needed
-            refreshTask = Task {
-                do {
-                    _ = try await usageTracker.checkDeviceStatus()
-                    print("✅ Refreshed usage data")
-                } catch {
-                    print("⚠️ Failed to refresh usage data: \(error)")
-
-                    // Surface critical errors to users based on error type
-                    if let usageError = error as? UsageError {
-                        switch usageError {
-                        case .networkError, .serverError(_):
-                            await MainActor.run {
-                                errorHandler.showError(AppError.network("Unable to refresh app data. Check your internet connection."))
-                            }
-                        case .invalidResponse, .decodingError:
-                            await MainActor.run {
-                                errorHandler.showError(AppError.network("Server temporarily unavailable. Please try again in a moment."))
-                            }
-                        default:
-                            // Don't show other errors as they're less critical for app launch
-                            break
-                        }
-                    } else if error is URLError {
-                        await MainActor.run {
-                            errorHandler.showError(AppError.network("Unable to refresh app data. Check your internet connection."))
-                        }
-                    } else if error.localizedDescription.contains("network") || error.localizedDescription.contains("connection") {
-                        await MainActor.run {
-                            errorHandler.showError(AppError.network("Unable to refresh app data. Check your internet connection."))
-                        }
-                    }
-                    // For other non-critical errors, just log them without disrupting user flow
-                }
-
-                await MainActor.run {
-                    self.refreshTask = nil
-                }
-            }
-        }
         .onDisappear {
             // Clean up tasks when view disappears
             processingTask?.cancel()
-            refreshTask?.cancel()
         }
     }
 
@@ -364,6 +321,9 @@ struct ClipperView: View {
             processingMessage = "Recording usage..."
             processingProgress = 0.9
             try await usageTracker.decrementCredits()
+
+            // Force UI refresh after credit decrement
+            await licenseManager.refreshLicenseStatus()
 
             // Complete - atomic state update
             processingMessage = "Complete!"

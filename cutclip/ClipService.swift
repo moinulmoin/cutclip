@@ -92,13 +92,20 @@ class ClipService: ObservableObject, Sendable {
 
             pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
-                if !data.isEmpty {
+                if !data.isEmpty, let self = self {
                     let output = String(data: data, encoding: .utf8) ?? ""
 
-                    // Parse FFmpeg progress output
-                    if let self = self, let progress = self.parseFFmpegProgress(from: output) {
-                        Task { @MainActor in
-                            self.updateProgress(progress)
+                    Task {
+                        // Check for duration on initial output
+                        if await stateManager.totalDuration == nil, let duration = self.parseDuration(from: output) {
+                            await stateManager.setTotalDuration(duration)
+                        }
+
+                        // Parse progress using total duration
+                        if let totalDuration = await stateManager.totalDuration,
+                           let progress = self.parseCurrentTime(from: output) {
+                            let percentage = min(progress / totalDuration, 1.0)
+                            await self.updateProgress(percentage)
                         }
                     }
 
@@ -184,25 +191,61 @@ class ClipService: ObservableObject, Sendable {
     @MainActor
     private func updateProgress(_ progress: Double) {
         // Update progress for current job if needed
-        print("Clipping progress: \(Int(progress * 100))%")
+        let percentage = Int(progress * 100)
+        print("Clipping progress: \(percentage)%")
+        if let job = currentJob {
+            let updatedJob = ClipJob(
+                url: job.url,
+                startTime: job.startTime,
+                endTime: job.endTime,
+                aspectRatio: job.aspectRatio,
+                status: .clipping,
+                progress: progress,
+                downloadedFilePath: job.downloadedFilePath,
+                outputFilePath: job.outputFilePath,
+                errorMessage: job.errorMessage
+            )
+            currentJob = updatedJob
+        }
     }
 
-    private nonisolated func parseFFmpegProgress(from output: String) -> Double? {
-        // Parse FFmpeg progress from time= output
-        let timePattern = #"time=(\d{2}):(\d{2}):(\d{2})"#
+    private nonisolated func parseDuration(from output: String) -> Double? {
+        // Look for duration in format "Duration: 00:01:23.45"
+        let durationPattern = #"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})"#
+        let regex = try? NSRegularExpression(pattern: durationPattern)
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+
+        if let match = regex?.firstMatch(in: output, range: range) {
+            let hoursRange = Range(match.range(at: 1), in: output)!
+            let minutesRange = Range(match.range(at: 2), in: output)!
+            let secondsRange = Range(match.range(at: 3), in: output)!
+
+            let hours = Double(String(output[hoursRange])) ?? 0
+            let minutes = Double(String(output[minutesRange])) ?? 0
+            let seconds = Double(String(output[secondsRange])) ?? 0
+
+            return hours * 3600 + minutes * 60 + seconds
+        }
+
+        return nil
+    }
+
+    private nonisolated func parseCurrentTime(from output: String) -> Double? {
+        // Look for time in format "time=00:00:12.34"
+        let timePattern = #"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})"#
         let regex = try? NSRegularExpression(pattern: timePattern)
         let range = NSRange(output.startIndex..<output.endIndex, in: output)
 
         if let match = regex?.firstMatch(in: output, range: range) {
-            let hours = Int(String(output[Range(match.range(at: 1), in: output)!])) ?? 0
-            let minutes = Int(String(output[Range(match.range(at: 2), in: output)!])) ?? 0
-            let seconds = Int(String(output[Range(match.range(at: 3), in: output)!])) ?? 0
+            let hoursRange = Range(match.range(at: 1), in: output)!
+            let minutesRange = Range(match.range(at: 2), in: output)!
+            let secondsRange = Range(match.range(at: 3), in: output)!
 
-            let currentSeconds = Double(hours * 3600 + minutes * 60 + seconds)
+            let hours = Double(String(output[hoursRange])) ?? 0
+            let minutes = Double(String(output[minutesRange])) ?? 0
+            let seconds = Double(String(output[secondsRange])) ?? 0
 
-            // For progress calculation, we'd need the total duration
-            // For now, return a simple progress indicator
-            return min(currentSeconds / 100.0, 1.0) // Rough estimate
+            return hours * 3600 + minutes * 60 + seconds
         }
 
         return nil
@@ -299,23 +342,16 @@ class ClipService: ObservableObject, Sendable {
     }
 }
 
-// Thread-safe actor for progress tracking
-private actor ProgressTracker {
-    private(set) var outputData = Data()
-    private(set) var totalDuration: Double?
-
-    func appendData(_ data: Data) {
-        outputData.append(data)
-    }
-
-    func setTotalDuration(_ duration: Double) {
-        totalDuration = duration
-    }
-}
-
 // Thread-safe actor for process state management
 private actor ProcessStateManager {
     private var hasResumed = false
+    private(set) var totalDuration: Double?
+
+    func setTotalDuration(_ duration: Double) {
+        if totalDuration == nil {
+            totalDuration = duration
+        }
+    }
 
     func markResumedAndCleanup(_ cleanup: () -> Void) -> Bool {
         if hasResumed {
@@ -325,49 +361,6 @@ private actor ProcessStateManager {
         cleanup()
         return false
     }
-}
-
-// Global functions for parsing (nonisolated)
-private nonisolated func parseDuration(from output: String) -> Double? {
-    // Look for duration in format "Duration: 00:01:23.45"
-    let durationPattern = #"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})"#
-    let regex = try? NSRegularExpression(pattern: durationPattern)
-    let range = NSRange(output.startIndex..<output.endIndex, in: output)
-
-    if let match = regex?.firstMatch(in: output, range: range) {
-        let hoursRange = Range(match.range(at: 1), in: output)!
-        let minutesRange = Range(match.range(at: 2), in: output)!
-        let secondsRange = Range(match.range(at: 3), in: output)!
-
-        let hours = Double(String(output[hoursRange])) ?? 0
-        let minutes = Double(String(output[minutesRange])) ?? 0
-        let seconds = Double(String(output[secondsRange])) ?? 0
-
-        return hours * 3600 + minutes * 60 + seconds
-    }
-
-    return nil
-}
-
-private nonisolated func parseCurrentTime(from output: String) -> Double? {
-    // Look for time in format "time=00:00:12.34"
-    let timePattern = #"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})"#
-    let regex = try? NSRegularExpression(pattern: timePattern)
-    let range = NSRange(output.startIndex..<output.endIndex, in: output)
-
-    if let match = regex?.firstMatch(in: output, range: range) {
-        let hoursRange = Range(match.range(at: 1), in: output)!
-        let minutesRange = Range(match.range(at: 2), in: output)!
-        let secondsRange = Range(match.range(at: 3), in: output)!
-
-        let hours = Double(String(output[hoursRange])) ?? 0
-        let minutes = Double(String(output[minutesRange])) ?? 0
-        let seconds = Double(String(output[secondsRange])) ?? 0
-
-        return hours * 3600 + minutes * 60 + seconds
-    }
-
-    return nil
 }
 
 enum ClipError: LocalizedError, Sendable {

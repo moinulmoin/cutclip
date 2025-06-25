@@ -23,7 +23,6 @@ class LicenseManager: ObservableObject {
     private let deviceIdentifier = DeviceIdentifier.shared
     private let secureStorage = SecureStorage.shared
     private let usageTracker = UsageTracker.shared
-    private let deviceRegistration = DeviceRegistrationService.shared
 
     // Task management
     private var initializationTask: Task<Void, Never>?
@@ -59,20 +58,15 @@ class LicenseManager: ObservableObject {
         print("🔐 Initializing license system...")
 
         do {
-            // 1. Initialize usage tracking first
-            let _ = try await usageTracker.initializeApp()
-            print("✅ Usage tracking initialized")
+            // 1. Initialize usage tracking and register device if needed
+            _ = try await usageTracker.initializeApp()
+            await usageTracker.registerDeviceIfNeeded()
+            print("✅ Usage tracking initialized and device registered.")
 
-            // 2. Check if device is already registered
-            if !secureStorage.hasDeviceRegistration() {
-                print("📱 Device not registered, registering now...")
-                await registerDevice()
-            }
-
-            // 3. Check license status
+            // 2. Check license status
             await refreshLicenseStatus()
 
-            // 4. Determine if license setup is needed
+            // 3. Determine if license setup is needed
             needsLicenseSetup = determineLicenseSetupRequired()
 
             print("🔐 License system initialized. Status: \(licenseStatus)")
@@ -121,38 +115,29 @@ class LicenseManager: ObservableObject {
 
         defer { isLoading = false }
 
-        let result = await deviceRegistration.validateLicense(licenseKey)
+        do {
+            let result = try await usageTracker.validateLicense(licenseKey: licenseKey)
 
-        switch result {
-        case .success(_):
-            licenseStatus = .licensed(
-                key: licenseKey,
-                expiresAt: nil, // No expiration from API
-                userEmail: nil  // No user email from API
-            )
-            // License status will be refreshed automatically on next check
-            needsLicenseSetup = false
+            if result.valid {
+                licenseStatus = .licensed(
+                    key: licenseKey,
+                    expiresAt: nil, // No expiration from API
+                    userEmail: nil  // No user email from API
+                )
+                needsLicenseSetup = false
 
-            // CRITICAL: Invalidate cache after license activation
-            await usageTracker.invalidateCache()
-            print("🗑️ Cache invalidated after license activation")
-
-            // Force state synchronization after license change
-            await syncLicenseState()
-
-            return true
-
-        case .failure(let error):
-            // Map generic errors to user-friendly license errors
-            if error.contains("already used") {
-                errorMessage = "License already in use on another device. Contact support if needed."
-            } else if error.contains("invalid") || error.contains("not found") {
-                errorMessage = "Invalid license key. Please check and try again."
-            } else if error.contains("internet") || error.contains("connection") {
-                errorMessage = "Unable to verify license. Check your internet connection."
+                // Force state synchronization after license change
+                await syncLicenseState()
+                return true
             } else {
-                errorMessage = "Unable to verify license. Check your internet connection."
+                errorMessage = result.message
+                return false
             }
+        } catch let error as UsageError {
+            errorMessage = error.localizedDescription
+            return false
+        } catch {
+            errorMessage = "An unexpected error occurred: \(error.localizedDescription)"
             return false
         }
     }
@@ -226,30 +211,37 @@ class LicenseManager: ObservableObject {
         // Check for stored license first
         if let storedLicense = secureStorage.retrieveLicense() {
             // Validate stored license with server
-            let validationResult = await deviceRegistration.validateLicense(storedLicense.key)
+            do {
+                let validationResult = try await usageTracker.validateLicense(licenseKey: storedLicense.key)
 
-            switch validationResult {
-            case .success(_):
-                // Update license status
-                licenseStatus = .licensed(
-                    key: storedLicense.key,
-                    expiresAt: nil,
-                    userEmail: nil
-                )
-                // Force fresh device status check to sync credit counts
-                do {
-                    _ = try await usageTracker.checkDeviceStatus(forceRefresh: true)
-                    // Sync state after successful validation
-                    await syncLicenseState()
-                } catch {
-                    print("⚠️ Failed to sync device status after license validation: \(error)")
+                if validationResult.valid {
+                    // Update license status
+                    licenseStatus = .licensed(
+                        key: storedLicense.key,
+                        expiresAt: nil,
+                        userEmail: nil
+                    )
+                    // Force fresh device status check to sync credit counts
+                    do {
+                        _ = try await usageTracker.checkDeviceStatus(forceRefresh: true)
+                        // Sync state after successful validation
+                        await syncLicenseState()
+                    } catch {
+                        print("⚠️ Failed to sync device status after license validation: \(error)")
+                    }
+                    return
+                } else {
+                    // License is invalid, remove it and invalidate all state
+                    let _ = secureStorage.deleteLicense()
+                    await usageTracker.invalidateCache()
+                    print("🔐 Stored license was invalid and removed")
+                    // Continue to check device status without license
                 }
-                return
-            case .failure(_):
-                // License is invalid, remove it and invalidate all state
+            } catch {
+                // License is invalid due to an error, remove it and invalidate all state
+                print("🔐 Stored license was invalid and removed due to error: \(error.localizedDescription)")
                 let _ = secureStorage.deleteLicense()
                 await usageTracker.invalidateCache()
-                print("🔐 Stored license was invalid and removed")
                 // Continue to check device status without license
             }
         }
@@ -264,6 +256,8 @@ class LicenseManager: ObservableObject {
             // Fall back to local state
             licenseStatus = .unknown
         }
+
+        print("🔄 State synchronized: \(licenseStatus.debugDescription)")
     }
 
     /// Centralized state synchronization to ensure consistency
@@ -304,29 +298,16 @@ class LicenseManager: ObservableObject {
         print("🔄 State synchronized: \(licenseStatus.debugDescription)")
     }
 
-    private func registerDevice() async {
-        let result = await deviceRegistration.registerDeviceAndCheckLicense()
-
-        switch result {
-        case .success(let response):
-            print("✅ Device registered: \(response.message)")
-
-        case .failure(let error):
-            print("❌ Device registration failed: \(error)")
-            errorMessage = error
-        }
-    }
-
     private func determineLicenseSetupRequired() -> Bool {
         // Ensure license status and usage status are synchronized
         let hasStoredLicense = secureStorage.hasValidLicense()
         let usageStatus = usageTracker.getUsageStatus()
-        
+
         // If we have a stored license but status shows unlicensed, there's a mismatch
         if hasStoredLicense, case .licensed = licenseStatus {
             return false
         }
-        
+
         // If UsageTracker shows licensed but we don't have stored license, sync issue
         if !hasStoredLicense, case .licensed = usageStatus {
             // Clear the mismatch by invalidating cache
@@ -334,7 +315,7 @@ class LicenseManager: ObservableObject {
                 await usageTracker.invalidateCache()
             }
         }
-        
+
         // Check final usage status after any synchronization
         switch usageStatus {
         case .licensed:

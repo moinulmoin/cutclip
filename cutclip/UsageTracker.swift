@@ -318,6 +318,61 @@ class UsageTracker: ObservableObject {
         throw lastError ?? UsageError.serverError(500)
     }
 
+    // MARK: - License Validation API
+
+    /// POST /api/validate-license
+    func validateLicense(licenseKey: String) async throws -> LicenseValidationResponse {
+        let deviceId = DeviceIdentifier.shared.getDeviceID()
+
+        // 1. Call validation API
+        let validationResult = try await callValidateLicenseAPI(licenseKey: licenseKey, deviceId: deviceId)
+
+        if validationResult.valid {
+            // 2. If valid, update device on backend to link license
+            _ = try await updateDeviceLicense(licenseKey)
+
+            // 3. Update local secure storage
+            let stored = SecureStorage.shared.storeLicense(licenseKey, deviceID: deviceId)
+            if !stored {
+                print("⚠️ Failed to store license key locally after validation")
+                // This is not a fatal error, as server holds the truth
+            }
+
+            // 4. Invalidate cache to force a fresh state
+            await invalidateCache()
+        }
+
+        return validationResult
+    }
+
+    private func callValidateLicenseAPI(licenseKey: String, deviceId: String) async throws -> LicenseValidationResponse {
+        guard let encodedLicense = licenseKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let encodedDeviceId = deviceId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw UsageError.invalidURL
+        }
+        let urlString = "\(APIConfiguration.baseURL)\(APIConfiguration.Endpoints.validateLicense)?license=\(encodedLicense)&deviceId=\(encodedDeviceId)"
+
+        return try await NetworkRetryHelper.retryOperation {
+            guard let url = URL(string: urlString) else {
+                throw UsageError.invalidURL
+            }
+            let request = APIConfiguration.createRequest(url: url)
+            let (data, response) = try await APIConfiguration.performSecureRequest(request)
+
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                // Try to parse error message for 4xx codes
+                if let httpResponse = response as? HTTPURLResponse, 400...499 ~= httpResponse.statusCode {
+                    if let errorResponse = try? JSONDecoder().decode(LicenseErrorResponse.self, from: data) {
+                        throw UsageError.licenseValidationFailed(errorResponse.message)
+                    }
+                }
+                throw UsageError.serverError((response as? HTTPURLResponse)?.statusCode ?? 500)
+            }
+
+            return try JSONDecoder().decode(LicenseValidationResponse.self, from: data)
+        }
+    }
+
     // MARK: - Main App Flow
 
     /// Initialize app - check device status or create device
@@ -370,6 +425,34 @@ class UsageTracker: ObservableObject {
         // CRITICAL: Invalidate cache after updating license
         await invalidateCache()
         print("🗑️ Cache invalidated after updating device license")
+    }
+
+    /// This function handles the one-time registration data storage for analytics.
+    /// It should be called once during the app's initial setup.
+    func registerDeviceIfNeeded() async {
+        if SecureStorage.shared.hasDeviceRegistration() {
+            return
+        }
+
+        print("📝 Performing one-time device registration for analytics...")
+        do {
+            let status = try await initializeApp()
+            if case .found(let deviceData) = status {
+                let registrationData: [String: Any] = [
+                    "device_id": deviceData.deviceId,
+                    "registered_at": ISO8601DateFormatter().string(from: Date()),
+                    "initial_free_credits": deviceData.freeCredits,
+                    "has_initial_license": deviceData.user?.license != nil
+                ]
+                if !SecureStorage.shared.storeDeviceRegistration(registrationData) {
+                    print("⚠️ Failed to store one-time device registration data.")
+                } else {
+                    print("✅ One-time device registration data stored.")
+                }
+            }
+        } catch {
+            print("❌ Failed to perform one-time device registration: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Usage Logic
@@ -614,6 +697,17 @@ struct DecrementedDevice: Codable {
     let freeCredits: Int
 }
 
+struct LicenseValidationResponse: Codable {
+    let success: Bool
+    let message: String
+    var valid: Bool { success }
+}
+
+struct LicenseErrorResponse: Codable {
+    let success: Bool
+    let message: String
+}
+
 // MARK: - Device Status Response
 
 enum UsageDeviceStatusResponse {
@@ -673,6 +767,7 @@ enum UsageError: Error, LocalizedError {
     case serverError(Int)
     case decodingError
     case insufficientCredits(String)
+    case licenseValidationFailed(String)
     case networkError
 
     var errorDescription: String? {
@@ -691,6 +786,8 @@ enum UsageError: Error, LocalizedError {
             return "Server temporarily unavailable. Please try again in a moment."
         case .insufficientCredits(_):
             return "Free clips used up. Enter a license key for unlimited clipping."
+        case .licenseValidationFailed(let message):
+            return message
         case .networkError:
             return "No internet connection. CutClip requires internet."
         }

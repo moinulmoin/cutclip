@@ -80,15 +80,7 @@ struct DisclaimerView: View {
             Button("I Understand and Accept") {
                 accepted = true
             }
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.black.gradient)
-            )
-            .buttonStyle(.plain)
+            .buttonStyle(PrimaryButtonStyle())
             .opacity(showContent ? 1.0 : 0.0)
             .animation(.easeInOut(duration: 0.6).delay(1.4), value: showContent)
             }

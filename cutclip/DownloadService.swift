@@ -25,17 +25,17 @@ class DownloadService: ObservableObject, Sendable {
               !urlString.contains("\r") else {
             return false
         }
-        
+
         guard let url = URL(string: urlString) else { return false }
         guard let host = url.host else { return false }
-        
+
         // Check for valid YouTube hosts
         let validHosts = ["youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com"]
         guard validHosts.contains(host.lowercased()) else { return false }
-        
+
         // Additional security checks
         guard url.scheme == "https" || url.scheme == "http" else { return false }
-        
+
         // Check for suspicious patterns
         let suspiciousPatterns = ["javascript:", "data:", "file:", "ftp:"]
         let lowercaseURL = urlString.lowercased()
@@ -44,7 +44,7 @@ class DownloadService: ObservableObject, Sendable {
                 return false
             }
         }
-        
+
         return true
     }
 
@@ -64,6 +64,9 @@ class DownloadService: ObservableObject, Sendable {
 
         // Let yt-dlp use the video title but sanitize it for filesystem safety
         let outputTemplate = tempDir.appendingPathComponent("%(title)s.%(ext)s").path
+
+        // Use an actor to manage state instead of captured variables
+        let stateManager = ProcessStateManager()
 
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
@@ -111,39 +114,60 @@ class DownloadService: ObservableObject, Sendable {
             }
 
             process.terminationHandler = { process in
-                pipe.fileHandleForReading.readabilityHandler = nil
-
                 Task {
                     defer {
-                        // Schedule cleanup after a delay to allow ClipService to use the file
+                        // Schedule cleanup after a longer delay to prevent file deletion during use
                         Task {
-                            try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
+                            try? await Task.sleep(nanoseconds: 300_000_000_000) // 5 minutes
                             self.cleanupTempDirectory(tempDir)
                         }
                     }
-                    
-                    if process.terminationStatus == 0 {
-                        if let filePath = await downloadTracker.downloadedFilePath {
-                            print("DEBUG: Parsed file path: \(filePath)")
-                            // Verify the parsed file actually exists
-                            if FileManager.default.fileExists(atPath: filePath) {
-                                print("DEBUG: File exists at parsed path")
-                                continuation.resume(returning: filePath)
+
+                    let didResume = await stateManager.markResumedAndCleanup {
+                        pipe.fileHandleForReading.readabilityHandler = nil
+                        if process.isRunning {
+                            process.terminate()
+                        }
+                    }
+
+                    if !didResume {
+                        if process.terminationStatus == 0 {
+                            if let filePath = await downloadTracker.downloadedFilePath {
+                                print("DEBUG: Parsed file path: \(filePath)")
+                                // Verify the parsed file actually exists
+                                if FileManager.default.fileExists(atPath: filePath) {
+                                    print("DEBUG: File exists at parsed path")
+                                    continuation.resume(returning: filePath)
+                                } else {
+                                    print("DEBUG: File does NOT exist at parsed path, searching directory")
+                                    // File doesn't exist at parsed path, fall back to directory search
+                                    self.findDownloadedFile(in: tempDir, continuation: continuation)
+                                }
                             } else {
-                                print("DEBUG: File does NOT exist at parsed path, searching directory")
-                                // File doesn't exist at parsed path, fall back to directory search
+                                print("DEBUG: No parsed path, searching directory")
+                                // No parsed path, search directory
                                 self.findDownloadedFile(in: tempDir, continuation: continuation)
                             }
                         } else {
-                            print("DEBUG: No parsed path, searching directory")
-                            // No parsed path, search directory
-                            self.findDownloadedFile(in: tempDir, continuation: continuation)
+                            let outputData = await downloadTracker.outputData
+                            let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error"
+                            continuation.resume(throwing: DownloadError.downloadFailed(errorOutput))
                         }
-                    } else {
-                        let outputData = await downloadTracker.outputData
-                        let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error"
-                        continuation.resume(throwing: DownloadError.downloadFailed(errorOutput))
                     }
+                }
+            }
+
+            // Add timeout to prevent hanging downloads (15 minutes max)
+            Task {
+                try? await Task.sleep(nanoseconds: 900_000_000_000) // 15 minutes
+                let didResume = await stateManager.markResumedAndCleanup {
+                    pipe.fileHandleForReading.readabilityHandler = nil
+                    if process.isRunning {
+                        process.terminate()
+                    }
+                }
+                if !didResume {
+                    continuation.resume(throwing: DownloadError.downloadFailed("Download timed out after 15 minutes"))
                 }
             }
 
@@ -174,47 +198,72 @@ class DownloadService: ObservableObject, Sendable {
     }
 
     // MARK: - Helper Methods
-    
+
     private nonisolated func findDownloadedFile(in tempDir: URL, continuation: CheckedContinuation<String, Error>) {
         do {
             print("DEBUG: Searching temp directory: \(tempDir.path)")
-            let files = try FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey])
+            let files = try FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .creationDateKey])
             print("DEBUG: Found \(files.count) files in temp directory")
-            
+
             // Debug: Print all files
             for file in files {
-                let resourceValues = try? file.resourceValues(forKeys: [.fileSizeKey])
+                let resourceValues = try? file.resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
                 let fileSize = resourceValues?.fileSize ?? 0
-                print("DEBUG: File: \(file.lastPathComponent) (size: \(fileSize) bytes)")
+                let creationDate = resourceValues?.creationDate?.timeIntervalSinceNow ?? 0
+                print("DEBUG: File: \(file.lastPathComponent) (size: \(fileSize) bytes, age: \(Int(-creationDate))s)")
             }
-            
-            // Filter for video files (not directories, and with reasonable size > 0)
-            let videoFiles = files.filter { file in
-                guard !file.hasDirectoryPath else { return false }
-                
-                // Check file size to ensure it's not empty
-                let resourceValues = try? file.resourceValues(forKeys: [.fileSizeKey])
-                let fileSize = resourceValues?.fileSize ?? 0
-                
-                // Check for common video extensions
-                let videoExtensions = ["mp4", "webm", "mkv", "avi", "mov", "flv", "m4v", "3gp"]
+
+            // Filter for video files with additional criteria
+            let videoFiles = files.compactMap { file -> (URL, Int, Date)? in
+                guard !file.hasDirectoryPath else { return nil }
+
+                // Check file size and creation date
+                guard let resourceValues = try? file.resourceValues(forKeys: [.fileSizeKey, .creationDateKey]),
+                      let fileSize = resourceValues.fileSize,
+                      let creationDate = resourceValues.creationDate else {
+                    return nil
+                }
+
+                // Minimum file size check (100KB for video files)
+                guard fileSize > 100_000 else { return nil }
+
+                // Check for video file extensions (including common formats)
+                let videoExtensions = ["mp4", "webm", "mkv", "avi", "mov", "flv", "m4v", "3gp", "ogg", "ogv"]
                 let fileExtension = file.pathExtension.lowercased()
-                
-                return fileSize > 0 && videoExtensions.contains(fileExtension)
+
+                guard videoExtensions.contains(fileExtension) else { return nil }
+
+                return (file, fileSize, creationDate)
             }
-            
-            print("DEBUG: Found \(videoFiles.count) video files")
-            
-            if let videoFile = videoFiles.first {
-                print("DEBUG: Using video file: \(videoFile.path)")
-                continuation.resume(returning: videoFile.path)
-            } else {
+
+            print("DEBUG: Found \(videoFiles.count) valid video files")
+
+            if videoFiles.isEmpty {
                 // Debug: List all files found
                 let allFiles = files.map { "\($0.lastPathComponent) (\($0.pathExtension))" }.joined(separator: ", ")
                 let errorMessage = "No video files found in temp directory. Files present: \(allFiles.isEmpty ? "none" : allFiles)"
                 print("DEBUG: \(errorMessage)")
                 continuation.resume(throwing: DownloadError.fileNotFound)
+                return
             }
+
+            // Sort by creation date (newest first) and then by file size (largest first)
+            let sortedVideoFiles = videoFiles.sorted { file1, file2 in
+                // First priority: newest file
+                if file1.2.timeIntervalSince(file2.2) > 10 { // 10 second tolerance
+                    return true
+                } else if file2.2.timeIntervalSince(file1.2) > 10 {
+                    return false
+                } else {
+                    // If files are similar in age, prefer larger file
+                    return file1.1 > file2.1
+                }
+            }
+
+            let selectedFile = sortedVideoFiles.first!.0
+            print("DEBUG: Selected video file: \(selectedFile.path) (size: \(sortedVideoFiles.first!.1) bytes)")
+            continuation.resume(returning: selectedFile.path)
+
         } catch {
             print("DEBUG: Error searching temp directory: \(error)")
             continuation.resume(throwing: DownloadError.downloadFailed("Failed to search temp directory: \(error.localizedDescription)"))
@@ -229,7 +278,7 @@ class DownloadService: ObservableObject, Sendable {
                 // Only remove files older than 1 hour to avoid interfering with active downloads
                 let cutoffDate = Date().addingTimeInterval(-3600)
                 let files = try FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: [.creationDateKey])
-                
+
                 for file in files {
                     if let creationDate = try? file.resourceValues(forKeys: [.creationDateKey]).creationDate,
                        creationDate < cutoffDate {
@@ -257,6 +306,20 @@ private actor DownloadTracker {
     }
 }
 
+// Thread-safe actor for process state management
+private actor ProcessStateManager {
+    private var hasResumed = false
+
+    func markResumedAndCleanup(_ cleanup: () -> Void) -> Bool {
+        if hasResumed {
+            return true
+        }
+        hasResumed = true
+        cleanup()
+        return false
+    }
+}
+
 // Global functions for parsing (nonisolated)
 private nonisolated func parseProgress(from output: String) -> Double? {
     // Look for progress patterns like "[download] 25.5% of 15.30MiB"
@@ -274,29 +337,102 @@ private nonisolated func parseProgress(from output: String) -> Double? {
 }
 
 private nonisolated func parseDownloadedFilePath(from output: String) -> String? {
-    // Look for multiple possible patterns from yt-dlp output
+    // Look for multiple possible patterns from yt-dlp output (in priority order)
     let patterns = [
-        #"\[download\] Destination: (.+)"#,           // Standard destination
-        #"\[download\] (.+) has already been downloaded"#, // Already downloaded case
-        #"has already been downloaded and merged into (.+)"#, // Merged case
-        #"\[merger\] Merging formats into \"(.+)\""#,  // Format merging
-        #"\[download\] 100% of .+ in .+ to (.+)"#     // Completion message with path
+        // Standard download completion with path
+        #"\[download\] 100(?:\.0)?% of .+? in .+? to (.+?)(?:\n|$)"#,
+        #"\[download\] 100(?:\.0)?% of .+? to (.+?)(?:\n|$)"#,
+
+        // Standard destination announcement
+        #"\[download\] Destination: (.+?)(?:\n|$)"#,
+
+        // Already downloaded cases
+        #"\[download\] (.+?) has already been downloaded"#,
+        #"has already been downloaded and merged into \"?(.+?)\"?"#,
+
+        // Format merging patterns
+        #"\[merger\] Merging formats into \"(.+?)\""#,
+        #"\[ffmpeg\] Merging formats into \"(.+?)\""#,
+
+        // File operations
+        #"Deleting original file (.+?) \(pass -k to keep\)"#,
+
+        // Generic file path patterns (last resort)
+        #"\"([^\"]+\.(?:mp4|webm|mkv|avi|mov|flv|m4v))\""#,
+        #"([^\s]+\.(?:mp4|webm|mkv|avi|mov|flv|m4v))(?:\s|$)"#
     ]
-    
+
     for pattern in patterns {
-        let regex = try? NSRegularExpression(pattern: pattern)
-        let range = NSRange(output.startIndex..<output.endIndex, in: output)
-        
-        if let match = regex?.firstMatch(in: output, range: range) {
-            let matchRange = Range(match.range(at: 1), in: output)!
-            let filePath = String(output[matchRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            // Remove quotes if present
-            let cleanPath = filePath.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-            return cleanPath
+        if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+            let range = NSRange(output.startIndex..<output.endIndex, in: output)
+
+            if let match = regex.firstMatch(in: output, range: range) {
+                let matchRange = Range(match.range(at: 1), in: output)!
+                let filePath = String(output[matchRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Clean and validate the path
+                let cleanPath = cleanFilePath(filePath)
+
+                // Convert to absolute path if relative
+                let absolutePath = makeAbsolutePath(cleanPath)
+
+                // Final validation
+                if isValidFilePath(absolutePath) {
+                    print("📁 Parsed file path: \(absolutePath)")
+                    return absolutePath
+                }
+            }
         }
     }
 
     return nil
+}
+
+private nonisolated func cleanFilePath(_ path: String) -> String {
+    // Remove quotes (single, double, and smart quotes)
+    var cleaned = path
+
+    // Remove all types of quotes
+    let quotesToRemove = ["\"", "'", "\u{201C}", "\u{201D}", "\u{2018}", "\u{2019}"]
+    for quote in quotesToRemove {
+        cleaned = cleaned.replacingOccurrences(of: quote, with: "")
+    }
+
+    // Remove any trailing line endings or control characters
+    cleaned = cleaned.replacingOccurrences(of: "\n", with: "")
+        .replacingOccurrences(of: "\r", with: "")
+        .replacingOccurrences(of: "\t", with: "")
+
+    return cleaned.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+}
+
+private nonisolated func makeAbsolutePath(_ path: String) -> String {
+    // If already absolute, return as-is
+    if path.hasPrefix("/") {
+        return path
+    }
+
+    // If relative, make it absolute based on current working directory
+    let currentDir = FileManager.default.currentDirectoryPath
+    return URL(fileURLWithPath: currentDir).appendingPathComponent(path).path
+}
+
+private nonisolated func isValidFilePath(_ path: String) -> Bool {
+    // Basic validation
+    guard !path.isEmpty else { return false }
+
+    // Must be absolute path for security
+    guard path.hasPrefix("/") else { return false }
+
+    // Check for dangerous patterns (but allow legitimate file paths)
+    let dangerousPatterns = ["\0", ";", "|", "&", "`"]
+    for pattern in dangerousPatterns {
+        if path.contains(pattern) {
+            return false
+        }
+    }
+
+    return true
 }
 
 enum DownloadError: LocalizedError, Sendable {

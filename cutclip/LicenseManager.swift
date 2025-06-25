@@ -17,6 +17,7 @@ class LicenseManager: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var needsLicenseSetup = false
+    @Published var isInitialized = false
 
     // Services
     private let deviceIdentifier = DeviceIdentifier.shared
@@ -24,37 +25,92 @@ class LicenseManager: ObservableObject {
     private let usageTracker = UsageTracker.shared
     private let deviceRegistration = DeviceRegistrationService.shared
 
+    // Task management
+    private var initializationTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
+
     private init() {
-        initializeLicenseSystem()
+        // No automatic initialization - prevents race condition
+        // Initialization will be handled by cutclipApp.onAppear
     }
 
     // MARK: - Initialization
 
     func initializeLicenseSystem() {
+        // Prevent multiple concurrent initializations
+        guard !isLoading && !isInitialized else { return }
+
+        // Cancel any existing initialization task
+        initializationTask?.cancel()
+
         isLoading = true
 
-        Task {
+        initializationTask = Task {
             await performInitialSetup()
-            isLoading = false
+            await MainActor.run {
+                self.isLoading = false
+                self.isInitialized = true
+                self.initializationTask = nil
+            }
         }
     }
 
     private func performInitialSetup() async {
         print("🔐 Initializing license system...")
 
-        // 1. Check if device is already registered
-        if !secureStorage.hasDeviceRegistration() {
-            print("📱 Device not registered, registering now...")
-            await registerDevice()
+        do {
+            // 1. Initialize usage tracking first
+            let _ = try await usageTracker.initializeApp()
+            print("✅ Usage tracking initialized")
+
+            // 2. Check if device is already registered
+            if !secureStorage.hasDeviceRegistration() {
+                print("📱 Device not registered, registering now...")
+                await registerDevice()
+            }
+
+            // 3. Check license status
+            await refreshLicenseStatus()
+
+            // 4. Determine if license setup is needed
+            needsLicenseSetup = determineLicenseSetupRequired()
+
+            print("🔐 License system initialized. Status: \(licenseStatus)")
+
+        } catch {
+            print("❌ Failed to initialize license system: \(error)")
+
+            // Provide specific error messages based on error type
+            if let usageError = error as? UsageError {
+                switch usageError {
+                case .networkError:
+                    errorMessage = "No internet connection. Please check your connection and restart the app."
+                case .serverError(let code) where code >= 500:
+                    errorMessage = "Server temporarily unavailable. Please try again in a moment."
+                case .serverError(_):
+                    errorMessage = "Unable to connect to CutClip servers. Please check your connection."
+                case .invalidResponse, .decodingError:
+                    errorMessage = "Server communication error. Please try again later."
+                default:
+                    errorMessage = "Failed to initialize CutClip. Please restart the app."
+                }
+            } else if error is URLError {
+                errorMessage = "No internet connection. Please check your connection and restart the app."
+            } else if error.localizedDescription.contains("network") || error.localizedDescription.contains("connection") {
+                errorMessage = "No internet connection. Please check your connection and restart the app."
+            } else {
+                errorMessage = "Failed to initialize CutClip. Please restart the app."
+            }
+
+            // Set fallback state to allow app to function with limited features
+            licenseStatus = .unknown
+            needsLicenseSetup = true
+
+            // For critical network errors, don't allow app to proceed normally
+            if error is URLError || (error as? UsageError)?.localizedDescription.contains("network") == true {
+                print("🚨 Critical network error during initialization - app functionality will be limited")
+            }
         }
-
-        // 2. Check license status
-        await refreshLicenseStatus()
-
-        // 3. Determine if license setup is needed
-        needsLicenseSetup = determineLicenseSetupRequired()
-
-        print("🔐 License system initialized. Status: \(licenseStatus)")
     }
 
     // MARK: - License Operations
@@ -76,6 +132,14 @@ class LicenseManager: ObservableObject {
             )
             // License status will be refreshed automatically on next check
             needsLicenseSetup = false
+
+            // CRITICAL: Invalidate cache after license activation
+            await usageTracker.invalidateCache()
+            print("🗑️ Cache invalidated after license activation")
+
+            // Force state synchronization after license change
+            await syncLicenseState()
+
             return true
 
         case .failure(let error):
@@ -94,17 +158,24 @@ class LicenseManager: ObservableObject {
     }
 
     func activateLicense(_ licenseKey: String) async -> Bool {
-        print("🔑 Activating license: \(licenseKey.prefix(8))...")
+        print("🔑 Activating license...")
         return await validateLicense(licenseKey)
     }
 
-    func deactivateLicense() {
+    func deactivateLicense() async {
         print("🔓 Deactivating license...")
 
         _ = secureStorage.deleteLicense()
         licenseStatus = .unlicensed
         // License status will be refreshed automatically on next check
         needsLicenseSetup = true
+
+        // CRITICAL: Invalidate cache after license deactivation
+        await usageTracker.invalidateCache()
+        print("🗑️ Cache invalidated after license deactivation")
+
+        // Force state synchronization after license change
+        await syncLicenseState()
 
         print("✅ License deactivated")
     }
@@ -149,50 +220,88 @@ class LicenseManager: ObservableObject {
     func refreshLicenseStatus() async {
         print("🔄 Refreshing license status...")
 
-                // Check for stored license
+        // Ensure cache is fresh after any license changes
+        await usageTracker.invalidateCache()
+
+        // Check for stored license first
         if let storedLicense = secureStorage.retrieveLicense() {
             // Validate stored license with server
             let validationResult = await deviceRegistration.validateLicense(storedLicense.key)
 
             switch validationResult {
             case .success(_):
+                // Update license status
                 licenseStatus = .licensed(
                     key: storedLicense.key,
-                    expiresAt: nil, // No expiration from API
-                    userEmail: nil  // No user email from API
+                    expiresAt: nil,
+                    userEmail: nil
                 )
+                // Force fresh device status check to sync credit counts
+                do {
+                    _ = try await usageTracker.checkDeviceStatus(forceRefresh: true)
+                    // Sync state after successful validation
+                    await syncLicenseState()
+                } catch {
+                    print("⚠️ Failed to sync device status after license validation: \(error)")
+                }
                 return
             case .failure(_):
-                // License is invalid, remove it
+                // License is invalid, remove it and invalidate all state
                 let _ = secureStorage.deleteLicense()
+                await usageTracker.invalidateCache()
                 print("🔐 Stored license was invalid and removed")
                 // Continue to check device status without license
             }
         }
 
-        // Check device status with backend
-        let deviceStatus = await deviceRegistration.checkDeviceStatus()
-
-        switch deviceStatus {
-        case .success(let response):
-            if response.requiresLicense {
-                licenseStatus = .trialExpired
-            } else {
-                licenseStatus = .freeTrial(remaining: response.remainingUses)
-            }
-
-        case .failure:
-            // Fallback to local status if network fails
-            let localStatus = usageTracker.getUsageStatus()
-            switch localStatus {
-            case .licensed:
-                licenseStatus = .licensed(key: "cached", expiresAt: nil, userEmail: nil)
-            case .freeTrial:
-                licenseStatus = .freeTrial(remaining: usageTracker.getRemainingCredits())
-            case .trialExpired:
-                licenseStatus = .trialExpired
-            }
+        // Get fresh device status for license-less state
+        do {
+            _ = try await usageTracker.checkDeviceStatus(forceRefresh: true)
+            // Sync state after device status check
+            await syncLicenseState()
+        } catch {
+            print("❌ Failed to refresh device status during license refresh: \(error)")
+            // Fall back to local state
+            licenseStatus = .unknown
         }
+    }
+
+    /// Centralized state synchronization to ensure consistency
+    private func syncLicenseState() async {
+        let currentStatus = usageTracker.getUsageStatus()
+
+        // Only update license status if we don't have a valid stored license
+        guard secureStorage.retrieveLicense() == nil else {
+            // If we have a stored license, ensure status reflects this
+            if case .licensed = licenseStatus {
+                // Already correct
+                return
+            } else {
+                // Fix state mismatch
+                if let storedLicense = secureStorage.retrieveLicense() {
+                    licenseStatus = .licensed(key: storedLicense.key, expiresAt: nil, userEmail: nil)
+                }
+            }
+            return
+        }
+
+        // Sync license status with usage tracker state
+        switch currentStatus {
+        case .licensed:
+            // This shouldn't happen since we checked for stored license above
+            // But handle it gracefully
+            if let storedLicense = secureStorage.retrieveLicense() {
+                licenseStatus = .licensed(key: storedLicense.key, expiresAt: nil, userEmail: nil)
+            } else {
+                licenseStatus = .unlicensed
+            }
+        case .freeTrial(let remaining):
+            licenseStatus = .freeTrial(remaining: remaining)
+        case .trialExpired:
+            licenseStatus = .trialExpired
+        }
+
+        print("🔄 State synchronized: \(licenseStatus.debugDescription)")
     }
 
     private func registerDevice() async {
@@ -209,14 +318,19 @@ class LicenseManager: ObservableObject {
     }
 
     private func determineLicenseSetupRequired() -> Bool {
-        switch licenseStatus {
+        // If user has a valid license, no setup needed
+        if case .licensed = licenseStatus {
+            return false
+        }
+
+        // Check if user has free credits available
+        let usageStatus = usageTracker.getUsageStatus()
+        switch usageStatus {
         case .licensed:
             return false
         case .freeTrial(let remaining):
-            return remaining == 0
-        case .trialExpired, .unlicensed:
-            return true
-        case .unknown:
+            return remaining == 0  // Only require setup if no credits left
+        case .trialExpired:
             return true
         }
     }

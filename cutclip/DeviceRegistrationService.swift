@@ -14,9 +14,7 @@ class DeviceRegistrationService: ObservableObject {
     @Published var isRegistering = false
     @Published var registrationError: String?
 
-    private var baseURL: String {
-        ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "http://localhost:3000/api"
-    }
+    private var baseURL: String { APIConfiguration.baseURL }
 
     private init() {}
 
@@ -84,7 +82,7 @@ class DeviceRegistrationService: ObservableObject {
             } else {
                 userFriendlyError = "Request failed. Please check your connection and retry."
             }
-            
+
             registrationError = userFriendlyError
             print("❌ Device registration error: \(error.localizedDescription)")
             return .failure(userFriendlyError)
@@ -94,24 +92,44 @@ class DeviceRegistrationService: ObservableObject {
     // MARK: - User Management
 
     private func callCheckDeviceAPI(deviceId: String) async throws -> [String: Any] {
-        let url = URL(string: "\(baseURL)/users/check-device?deviceId=\(deviceId)")!
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
+        guard let encodedDeviceId = deviceId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             throw APIError.invalidResponse
         }
+        let url = URL(string: "\(baseURL)\(APIConfiguration.Endpoints.checkDevice)?deviceId=\(encodedDeviceId)")!
 
-        guard 200...299 ~= httpResponse.statusCode else {
-            throw APIError.httpError(httpResponse.statusCode)
+        let request = APIConfiguration.createRequest(url: url)
+
+        // Retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw APIError.invalidResponse
+                }
+
+                guard 200...299 ~= httpResponse.statusCode else {
+                    throw APIError.httpError(httpResponse.statusCode)
+                }
+
+                if attempt > 1 {
+                    print("✅ Check device succeeded on attempt \(attempt)")
+                }
+                return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+            } catch {
+                lastError = error
+                print("⚠️ Check device failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
         }
 
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return json ?? [:]
+        print("❌ Check device failed after 3 attempts")
+        throw lastError ?? APIError.noData
     }
 
     private func checkUserExists(deviceId: String) async throws -> UserCheckResponse {
@@ -179,30 +197,51 @@ class DeviceRegistrationService: ObservableObject {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw APIError.invalidResponse
+                }
+
+                guard 200...299 ~= httpResponse.statusCode else {
+                    throw APIError.httpError(httpResponse.statusCode)
+                }
+
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+                let deviceData = json?["data"] as? [String: Any]
+
+                if attempt > 1 {
+                    print("✅ Create device succeeded on attempt \(attempt)")
+                }
+
+                return DeviceRegistrationResponse(
+                    deviceId: deviceData?["deviceId"] as? String ?? deviceId,
+                    registered: json?["success"] as? Bool ?? false,
+                    remainingUses: 3, // New devices get 3 free credits as per API docs
+                    requiresLicense: false,
+                    message: json?["message"] as? String ?? "Device created successfully",
+                )
+            } catch {
+                lastError = error
+                print("⚠️ Create device failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
         }
 
-        guard 200...299 ~= httpResponse.statusCode else {
-            throw APIError.httpError(httpResponse.statusCode)
-        }
-
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-
-        let deviceData = json?["data"] as? [String: Any]
-
-        return DeviceRegistrationResponse(
-            deviceId: deviceData?["deviceId"] as? String ?? deviceId,
-            registered: json?["success"] as? Bool ?? false,
-            remainingUses: 3, // New devices get 3 free credits as per API docs
-            requiresLicense: false,
-            message: json?["message"] as? String ?? "Device created successfully",
-        )
+        print("❌ Create device failed after 3 attempts")
+        throw lastError ?? APIError.noData
     }
 
-        // MARK: - License Validation
+    // MARK: - License Validation
 
     func validateLicense(_ licenseKey: String) async -> LicenseValidationResult {
         // Check network first
@@ -281,9 +320,7 @@ class DeviceRegistrationService: ObservableObject {
     private func callRecordUsageAPI(deviceId: String) async throws -> UsageResponse {
         let url = URL(string: "\(baseURL)/users/decrement-free-credits")!
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = APIConfiguration.createRequest(url: url, method: "PUT")
 
         let requestBody: [String: Any] = [
             "deviceId": deviceId
@@ -291,26 +328,47 @@ class DeviceRegistrationService: ObservableObject {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw APIError.invalidResponse
+                }
+
+                guard 200...299 ~= httpResponse.statusCode else {
+                    throw APIError.httpError(httpResponse.statusCode)
+                }
+
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+                let dataDict = json?["data"] as? [String: Any]
+                let deviceData = dataDict?["device"] as? [String: Any]
+
+                if attempt > 1 {
+                    print("✅ Record usage succeeded on attempt \(attempt)")
+                }
+
+                return UsageResponse(
+                    remainingUses: deviceData?["freeCredits"] as? Int ?? 0,
+                    requiresLicense: (deviceData?["freeCredits"] as? Int ?? 0) <= 0,
+                    message: json?["message"] as? String ?? ""
+                )
+            } catch {
+                lastError = error
+                print("⚠️ Record usage failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
         }
 
-        guard 200...299 ~= httpResponse.statusCode else {
-            throw APIError.httpError(httpResponse.statusCode)
-        }
-
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-
-        let dataDict = json?["data"] as? [String: Any]
-        let deviceData = dataDict?["device"] as? [String: Any]
-
-        return UsageResponse(
-            remainingUses: deviceData?["freeCredits"] as? Int ?? 0,
-            requiresLicense: (deviceData?["freeCredits"] as? Int ?? 0) <= 0,
-            message: json?["message"] as? String ?? ""
-        )
+        print("❌ Record usage failed after 3 attempts")
+        throw lastError ?? APIError.noData
     }
 
         // MARK: - Device Status Check
@@ -335,21 +393,48 @@ class DeviceRegistrationService: ObservableObject {
 extension DeviceRegistrationService {
 
     func callValidateLicenseAPI(licenseKey: String, deviceId: String) async throws -> LicenseValidationResponse {
-        let url = URL(string: "\(baseURL)/validate-license?license=\(licenseKey)&deviceId=\(deviceId)")!
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
+        guard let encodedLicense = licenseKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let encodedDeviceId = deviceId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             throw APIError.invalidResponse
         }
+        let url = URL(string: "\(baseURL)\(APIConfiguration.Endpoints.validateLicense)?license=\(encodedLicense)&deviceId=\(encodedDeviceId)")!
 
-        guard 200...299 ~= httpResponse.statusCode else {
-            throw APIError.httpError(httpResponse.statusCode)
+        let request = APIConfiguration.createRequest(url: url)
+
+        // Retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw APIError.invalidResponse
+                }
+
+                guard 200...299 ~= httpResponse.statusCode else {
+                    throw APIError.httpError(httpResponse.statusCode)
+                }
+
+                if attempt > 1 {
+                    print("✅ License validation succeeded on attempt \(attempt)")
+                }
+                return try self.parseLicenseValidationResponse(data: data)
+            } catch {
+                lastError = error
+                print("⚠️ License validation failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
         }
+
+        print("❌ License validation failed after 3 attempts")
+        throw lastError ?? APIError.noData
+    }
+
+    private func parseLicenseValidationResponse(data: Data) throws -> LicenseValidationResponse {
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
@@ -378,11 +463,9 @@ extension DeviceRegistrationService {
     }
 
     func callUpdateDeviceAPI(deviceId: String, licenseKey: String) async throws -> UpdateDeviceResponse {
-        let url = URL(string: "\(baseURL)/users/update-device")!
+        let url = URL(string: "\(baseURL)\(APIConfiguration.Endpoints.updateDevice)")!
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = APIConfiguration.createRequest(url: url, method: "PUT")
 
         let requestBody: [String: Any] = [
             "deviceId": deviceId,
@@ -391,23 +474,37 @@ extension DeviceRegistrationService {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw APIError.invalidResponse
+                }
+
+                guard 200...299 ~= httpResponse.statusCode else {
+                    throw APIError.httpError(httpResponse.statusCode)
+                }
+
+                if attempt > 1 {
+                    print("✅ Update device succeeded on attempt \(attempt)")
+                }
+                return try JSONDecoder().decode(UpdateDeviceResponse.self, from: data)
+            } catch {
+                lastError = error
+                print("⚠️ Update device failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
         }
 
-        guard 200...299 ~= httpResponse.statusCode else {
-            throw APIError.httpError(httpResponse.statusCode)
-        }
-
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-
-        return UpdateDeviceResponse(
-            success: json?["success"] as? Bool ?? false,
-            message: json?["message"] as? String ?? "",
-            data: json?["data"] as? UpdateDeviceData
-        )
+        print("❌ Update device failed after 3 attempts")
+        throw lastError ?? APIError.noData
     }
 
     func callCheckDeviceStatusAPI(deviceId: String) async throws -> DeviceStatusResponse {

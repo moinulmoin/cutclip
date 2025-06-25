@@ -22,101 +22,190 @@ class ClipService: ObservableObject, Sendable {
             throw ClipError.binaryNotFound("FFmpeg not configured")
         }
 
-        print("DEBUG ClipService: Input path received: \(inputPath)")
-        print("DEBUG ClipService: File exists at input path: \(FileManager.default.fileExists(atPath: inputPath))")
-
-        // Generate output filename
-        let outputFileName = generateOutputFileName(for: job)
-        let outputPath = getOutputDirectory().appendingPathComponent(outputFileName).path
-
-        let sanitizedInputPath = sanitizeFilePath(inputPath)
-        print("DEBUG ClipService: Sanitized input path: \(sanitizedInputPath)")
-        print("DEBUG ClipService: File exists at sanitized path: \(FileManager.default.fileExists(atPath: sanitizedInputPath))")
-
-        // Build FFmpeg arguments with input sanitization
-        var arguments = [
-            "-i", sanitizedInputPath,
-            "-ss", sanitizeTimeString(job.startTime),
-            "-to", sanitizeTimeString(job.endTime),
-            "-c:v", "libx264",
-            "-c:a", "aac",
-            "-preset", "medium",
-            "-crf", "23"
-        ]
-
-        // Add crop filter if aspect ratio is not original
-        if let cropFilter = job.aspectRatio.cropFilter {
-            arguments.append(contentsOf: ["-vf", sanitizeFilterString(cropFilter)])
+        // Enhanced input validation and sanitization
+        guard !inputPath.isEmpty,
+              inputPath.count <= 2048, // Reasonable path length limit
+              !inputPath.contains("\0"), // Null byte injection
+              !inputPath.contains("\n"), // Newline injection
+              !inputPath.contains("\r") else { // Carriage return injection
+            throw ClipError.invalidInput("Invalid input file path")
         }
 
-        arguments.append(contentsOf: [
-            "-avoid_negative_ts", "make_zero",
-            "-y", // Overwrite output file
-            sanitizeFilePath(outputPath)
-        ])
+        // Verify input file exists and is readable
+        guard FileManager.default.fileExists(atPath: inputPath),
+              FileManager.default.isReadableFile(atPath: inputPath) else {
+            throw ClipError.invalidInput("Input file does not exist or is not readable")
+        }
+
+        // Validate time format and values
+        guard ValidationUtils.isValidTimeFormat(job.startTime),
+              ValidationUtils.isValidTimeFormat(job.endTime) else {
+            throw ClipError.invalidInput("Invalid time format. Use HH:MM:SS")
+        }
+
+        // Ensure start time is before end time
+        guard let startSeconds = ValidationUtils.timeStringToSeconds(job.startTime),
+              let endSeconds = ValidationUtils.timeStringToSeconds(job.endTime),
+              startSeconds < endSeconds else {
+            throw ClipError.invalidInput("Start time must be before end time")
+        }
+
+        // Create secure output path in Downloads directory
+        let downloadsPath = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+        let timestamp = DateFormatter.yyyyMMddHHmmss.string(from: Date())
+        let outputFileName = "CutClip_\(timestamp).mp4"
+        let outputPath = downloadsPath.appendingPathComponent(outputFileName).path
+
+        // Ensure output directory exists and is writable
+        try FileManager.default.createDirectory(at: downloadsPath, withIntermediateDirectories: true)
+        guard FileManager.default.isWritableFile(atPath: downloadsPath.path) else {
+            throw ClipError.diskSpaceError("Cannot write to Downloads directory")
+        }
+
+        // Use an actor to manage state instead of captured variables
+        let stateManager = ProcessStateManager()
 
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: ffmpegPath)
-            process.arguments = arguments
+
+            // Secure argument construction - no shell interpolation
+            process.arguments = [
+                "-i", inputPath,          // Input file (already validated)
+                "-ss", job.startTime,     // Start time (already validated)
+                "-to", job.endTime,       // End time (already validated)
+                "-c", "copy",             // Copy streams without re-encoding
+                "-avoid_negative_ts", "make_zero", // Handle negative timestamps
+                "-y",                     // Overwrite output file
+                outputPath                // Output file (constructed securely)
+            ]
 
             let pipe = Pipe()
             process.standardError = pipe
+            process.standardOutput = pipe
 
-            // Use thread-safe actor for progress tracking
-            let progressTracker = ProgressTracker()
+            // Security: Set restrictive environment
+            process.environment = [
+                "PATH": "/usr/bin:/bin", // Minimal PATH
+                "HOME": NSTemporaryDirectory() // Sandbox home directory
+            ]
 
-            pipe.fileHandleForReading.readabilityHandler = { handle in
+            pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 if !data.isEmpty {
-                    Task {
-                        await progressTracker.appendData(data)
-                        let output = String(data: data, encoding: .utf8) ?? ""
+                    let output = String(data: data, encoding: .utf8) ?? ""
 
-                        // Parse duration on first occurrence
-                        if await progressTracker.totalDuration == nil {
-                            if let duration = parseDuration(from: output) {
-                                await progressTracker.setTotalDuration(duration)
-                            }
+                    // Parse FFmpeg progress output
+                    if let self = self, let progress = self.parseFFmpegProgress(from: output) {
+                        Task { @MainActor in
+                            self.updateProgress(progress)
                         }
+                    }
 
-                        // Parse progress
-                        if let duration = await progressTracker.totalDuration,
-                           let currentTime = parseCurrentTime(from: output) {
-                            let progress = min(currentTime / duration, 1.0)
-                            await MainActor.run {
-                                self.updateJobProgress(progress)
-                            }
-                        }
+                    // Log only non-sensitive information
+                    if !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        print("FFmpeg: \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
                     }
                 }
             }
 
             process.terminationHandler = { process in
-                pipe.fileHandleForReading.readabilityHandler = nil
-
                 Task {
-                    if process.terminationStatus == 0 {
-                        // Verify output file exists
-                        if FileManager.default.fileExists(atPath: outputPath) {
-                            continuation.resume(returning: outputPath)
-                        } else {
-                            continuation.resume(throwing: ClipError.outputFileNotFound)
+                    let didResume = await stateManager.markResumedAndCleanup {
+                        pipe.fileHandleForReading.readabilityHandler = nil
+                        if process.isRunning {
+                            process.terminate()
+                            // Force kill if doesn't terminate within 5 seconds
+                            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                                if process.isRunning {
+                                    process.interrupt()
+                                }
+                            }
                         }
-                    } else {
-                        let outputData = await progressTracker.outputData
-                        let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error"
-                        continuation.resume(throwing: ClipError.clippingFailed(errorOutput))
                     }
+
+                    if !didResume {
+                        if process.terminationStatus == 0 {
+                            // Verify output file was created and has reasonable size
+                            if FileManager.default.fileExists(atPath: outputPath) {
+                                do {
+                                    let attributes = try FileManager.default.attributesOfItem(atPath: outputPath)
+                                    let fileSize = attributes[.size] as? Int64 ?? 0
+
+                                    if fileSize > 1000 { // At least 1KB
+                                        continuation.resume(returning: outputPath)
+                                    } else {
+                                        continuation.resume(throwing: ClipError.processError("Output file is too small or empty"))
+                                    }
+                                } catch {
+                                    continuation.resume(throwing: ClipError.processError("Failed to verify output file: \(error.localizedDescription)"))
+                                }
+                            } else {
+                                continuation.resume(throwing: ClipError.processError("Output file was not created"))
+                            }
+                        } else {
+                            let errorData = try? pipe.fileHandleForReading.readToEnd()
+                            let errorOutput = errorData.flatMap { String(data: $0, encoding: .utf8) } ?? "Unknown error"
+                            continuation.resume(throwing: ClipError.processError("FFmpeg failed: \(errorOutput)"))
+                        }
+                    }
+                }
+            }
+
+            // Security timeout - prevent runaway processes
+            Task {
+                try? await Task.sleep(nanoseconds: 600_000_000_000) // 10 minutes max
+                let didResume = await stateManager.markResumedAndCleanup {
+                    pipe.fileHandleForReading.readabilityHandler = nil
+                    if process.isRunning {
+                        process.terminate()
+                    }
+                }
+                if !didResume {
+                    continuation.resume(throwing: ClipError.processError("Video processing timed out"))
                 }
             }
 
             do {
                 try process.run()
             } catch {
-                continuation.resume(throwing: ClipError.processError(error.localizedDescription))
+                Task {
+                    _ = await stateManager.markResumedAndCleanup {
+                        pipe.fileHandleForReading.readabilityHandler = nil
+                    }
+                    continuation.resume(throwing: ClipError.processError("Failed to start FFmpeg: \(error.localizedDescription)"))
+                }
             }
         }
+    }
+
+    // MARK: - Helper Methods
+
+    @MainActor
+    private func updateProgress(_ progress: Double) {
+        // Update progress for current job if needed
+        print("Clipping progress: \(Int(progress * 100))%")
+    }
+
+    private nonisolated func parseFFmpegProgress(from output: String) -> Double? {
+        // Parse FFmpeg progress from time= output
+        let timePattern = #"time=(\d{2}):(\d{2}):(\d{2})"#
+        let regex = try? NSRegularExpression(pattern: timePattern)
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+
+        if let match = regex?.firstMatch(in: output, range: range) {
+            let hours = Int(String(output[Range(match.range(at: 1), in: output)!])) ?? 0
+            let minutes = Int(String(output[Range(match.range(at: 2), in: output)!])) ?? 0
+            let seconds = Int(String(output[Range(match.range(at: 3), in: output)!])) ?? 0
+
+            let currentSeconds = Double(hours * 3600 + minutes * 60 + seconds)
+
+            // For progress calculation, we'd need the total duration
+            // For now, return a simple progress indicator
+            return min(currentSeconds / 100.0, 1.0) // Rough estimate
+        }
+
+        return nil
     }
 
     private nonisolated func generateOutputFileName(for job: ClipJob) -> String {
@@ -173,23 +262,27 @@ class ClipService: ObservableObject, Sendable {
 
     // MARK: - Input Sanitization
 
-    private nonisolated func sanitizeFilePath(_ path: String) -> String {
-        // Remove only null bytes and control characters that could break the process
+    private nonisolated func sanitizeFilePath(_ path: String) throws -> String {
+        // Remove control characters that could break the process
         let sanitized = path.replacingOccurrences(of: "\0", with: "")
             .replacingOccurrences(of: "\n", with: "")
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\t", with: "")
-        
-        // For security, check for command injection patterns but don't remove valid file path characters
-        let dangerousPatterns = [";", "|", "&", "`"]
+
+        // SECURITY: Reject paths with dangerous command injection patterns
+        let dangerousPatterns = [";", "|", "&", "`", "$", "\\", "../", "~"]
         for pattern in dangerousPatterns {
             if sanitized.contains(pattern) {
-                // Log potential security issue but don't modify the path
-                print("Warning: File path contains potentially dangerous pattern: \(pattern)")
+                print("🚨 SECURITY: Rejecting file path with dangerous pattern: \(pattern)")
+                throw ClipError.invalidInput("Invalid file path: contains dangerous characters")
             }
         }
-        
-        // Return the path as-is since Process.arguments handles escaping automatically
+
+        // Ensure path is absolute to prevent relative path attacks
+        if !sanitized.hasPrefix("/") {
+            throw ClipError.invalidInput("Invalid file path: must be absolute path")
+        }
+
         return sanitized
     }
 
@@ -217,6 +310,20 @@ private actor ProgressTracker {
 
     func setTotalDuration(_ duration: Double) {
         totalDuration = duration
+    }
+}
+
+// Thread-safe actor for process state management
+private actor ProcessStateManager {
+    private var hasResumed = false
+
+    func markResumedAndCleanup(_ cleanup: () -> Void) -> Bool {
+        if hasResumed {
+            return true
+        }
+        hasResumed = true
+        cleanup()
+        return false
     }
 }
 
@@ -272,6 +379,7 @@ enum ClipError: LocalizedError, Sendable {
     case endTimeBeforeStartTime
     case diskSpaceError(String)
     case fileSystemError(String)
+    case invalidInput(String)
 
     var errorDescription: String? {
         switch self {
@@ -291,6 +399,8 @@ enum ClipError: LocalizedError, Sendable {
             return "Unable to save video. Please check your disk space."
         case .fileSystemError(_):
             return "Unable to save video. Please check your disk space."
+        case .invalidInput(let message):
+            return message
         }
     }
 
@@ -312,6 +422,8 @@ enum ClipError: LocalizedError, Sendable {
             return .diskSpace("Unable to save video. Please check your disk space.")
         case .fileSystemError(_):
             return .fileSystem("Unable to save video. Please check your disk space.")
+        case .invalidInput(let message):
+            return .invalidInput(message)
         }
     }
 }
@@ -321,4 +433,10 @@ extension DateFormatter {
         closure(self)
         return self
     }
+
+    static let yyyyMMddHHmmss: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        return formatter
+    }()
 }

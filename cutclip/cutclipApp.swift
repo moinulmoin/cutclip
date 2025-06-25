@@ -17,29 +17,13 @@ struct cutclipApp: App {
                     // Debug: Verify environment variables
                     print("🔧 API Base URL: \(ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "not set")")
                     #endif
-                    
-                    // Initialize license and usage tracking system
-                    Task {
-                        await initializeLicenseSystem()
-                    }
+
+                    // Initialize license system only once
+                    LicenseManager.shared.initializeLicenseSystem()
                 }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultPosition(.center)
-    }
-    
-    private func initializeLicenseSystem() async {
-        // Initialize usage tracking first, then refresh license status
-        do {
-            let _ = try await UsageTracker.shared.initializeApp()
-            print("✅ Usage tracking initialized")
-            
-            // Only refresh license status after usage tracking completes
-            await LicenseManager.shared.refreshLicenseStatus()
-            print("✅ License system fully initialized")
-        } catch {
-            print("❌ Failed to initialize license system: \(error)")
-        }
     }
 }

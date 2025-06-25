@@ -62,15 +62,7 @@ struct AutoSetupView: View {
                         Button("Get Started") {
                             startSetup()
                         }
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 32)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(LinearGradient(colors: [.black.opacity(0.8), .black], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        )
-                        .buttonStyle(.plain)
+                        .buttonStyle(PrimaryButtonStyle())
                     }
                     .opacity(showContent ? 1.0 : 0.0)
                     .animation(.easeInOut(duration: 0.6).delay(0.6), value: showContent)
@@ -150,15 +142,7 @@ struct SetupProgressView: View {
                     Button("Try Again") {
                         onRetry()
                     }
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(.black, lineWidth: 1)
-                    )
-                    .buttonStyle(.plain)
+                    .buttonStyle(SecondaryButtonStyle())
                 }
                 .padding()
                 .background(
@@ -198,15 +182,7 @@ struct SetupCompleteView: View {
             Button("Continue") {
                 onContinue()
             }
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 32)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(LinearGradient(colors: [.green.opacity(0.8), .green], startPoint: .topLeading, endPoint: .bottomTrailing))
-            )
-            .buttonStyle(.plain)
+            .buttonStyle(AccentButtonStyle())
             .opacity(showSuccess ? 1.0 : 0.0)
             .animation(.easeInOut(duration: 0.6).delay(0.6), value: showSuccess)
         }

@@ -22,6 +22,11 @@ class ErrorHandler: ObservableObject {
         self.showingAlert = true
     }
     
+    func showError(_ error: AppError) {
+        self.currentError = error
+        self.showingAlert = true
+    }
+    
     func clearError() {
         currentError = nil
         showingAlert = false
@@ -178,6 +183,7 @@ enum AppError: LocalizedError, Equatable, Sendable {
     case clippingFailed(String)
     case fileSystem(String)
     case licenseError(String)
+    case initialization(String)
     case unknown(String)
     
     var errorTitle: String {
@@ -198,6 +204,8 @@ enum AppError: LocalizedError, Equatable, Sendable {
             return "File Access Error"
         case .licenseError:
             return "License Required"
+        case .initialization:
+            return "Startup Failed"
         case .unknown:
             return "Something Went Wrong"
         }
@@ -220,6 +228,8 @@ enum AppError: LocalizedError, Equatable, Sendable {
         case .fileSystem(let message):
             return message
         case .licenseError(let message):
+            return message
+        case .initialization(let message):
             return message
         case .unknown(let message):
             return message
@@ -244,6 +254,8 @@ enum AppError: LocalizedError, Equatable, Sendable {
             return "Check file permissions and available disk space."
         case .licenseError:
             return "Please enter a valid license key or wait for your trial credits to reset."
+        case .initialization:
+            return "Please restart the application."
         case .unknown:
             return "Please try again or restart the application."
         }
@@ -253,7 +265,7 @@ enum AppError: LocalizedError, Equatable, Sendable {
         switch self {
         case .network, .downloadFailed, .clippingFailed, .unknown:
             return true
-        case .diskSpace, .invalidInput, .binaryNotFound, .fileSystem, .licenseError:
+        case .diskSpace, .invalidInput, .binaryNotFound, .fileSystem, .licenseError, .initialization:
             return false
         }
     }

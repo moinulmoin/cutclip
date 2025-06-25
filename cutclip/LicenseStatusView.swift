@@ -13,65 +13,75 @@ struct LicenseStatusView: View {
     @EnvironmentObject private var errorHandler: ErrorHandler
     @Environment(\.dismiss) private var dismiss
 
-    @State private var licenseKey = ""
-    @State private var showingLicenseEntry = false
+    @State private var showingInput = false
+    @State private var licenseKeyInput = ""
+    @State private var isValidating = false
+    @State private var validationError: String? = nil
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-            // Header with close button
-            HStack {
-                Text("Settings")
-                    .font(.headline)
+        VStack(spacing: 20) {
+            // Header
+            VStack(spacing: 8) {
+                Image("AppLogo")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 60, height: 60)
 
-                Spacer()
+                Text("CutClip")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
 
-                Button("Close") {
-                    dismiss()
+                Text("YouTube Video Clipper")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+
+            Divider()
+
+            // License Status Section
+            VStack(spacing: 16) {
+                if licenseManager.isLoading {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Checking license status...")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    // Current status display
+                    statusDisplay
+
+                    // Action buttons
+                    actionButtons
+
+                    // Error display
+                    if let error = validationError ?? licenseManager.errorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .padding(.horizontal)
+                            .multilineTextAlignment(.center)
+                    }
                 }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
-            }
-
-            // Status section
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Status")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-
-                statusCard
-            }
-
-            // License section
-            VStack(alignment: .leading, spacing: 12) {
-                Text("License")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-
-                licenseEntrySection
-            }
-            
-            // Updates section - TODO: Enable in v1.1
-            // VStack(alignment: .leading, spacing: 12) {
-            //     Button("Check for Updates") {
-            //         updateManager.checkForUpdates()
-            //     }
-            //     .buttonStyle(.plain)
-            //     .foregroundColor(.accentColor)
-            // }
             }
         }
-        .padding(24)
-        .frame(width: 440, height: 400)
-        .task {
-            await licenseManager.refreshLicenseStatus()
+        .padding()
+        .frame(maxWidth: 500)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(12)
+        .sheet(isPresented: $showingInput) {
+            licenseInputSheet
+        }
+        .onAppear {
+            Task {
+                await refreshLicenseStatus()
+            }
         }
     }
 
     @ViewBuilder
-    private var statusCard: some View {
+    private var statusDisplay: some View {
         HStack(spacing: 8) {
             statusIcon
             Text(statusTitle)
@@ -134,27 +144,43 @@ struct LicenseStatusView: View {
     }
 
     @ViewBuilder
-    private var licenseEntrySection: some View {
+    private var actionButtons: some View {
+        HStack(spacing: 12) {
+            Button("Get License") {
+                if let url = URL(string: "https://clipcut.moinulmoin.com") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .buttonStyle(.bordered)
+
+            Button("Activate") {
+                showingInput = true
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(licenseKeyInput.isEmpty || licenseManager.isLoading)
+        }
+    }
+
+    @ViewBuilder
+    private var licenseInputSheet: some View {
         VStack(spacing: 12) {
-            TextField("PRO-XXXXX-XXXXX", text: $licenseKey)
+            TextField("PRO-XXXXX-XXXXX", text: $licenseKeyInput)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
 
             HStack(spacing: 12) {
-                Button("Get License") {
-                    if let url = URL(string: "https://clipcut.moinulmoin.com") {
-                        NSWorkspace.shared.open(url)
-                    }
+                Button("Cancel") {
+                    showingInput = false
                 }
                 .buttonStyle(.bordered)
 
                 Button("Activate") {
                     Task {
-                        await activateLicense()
+                        await validateLicenseKey()
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(licenseKey.isEmpty || licenseManager.isLoading)
+                .disabled(licenseKeyInput.isEmpty || licenseManager.isLoading)
             }
 
             if licenseManager.isLoading {
@@ -167,14 +193,39 @@ struct LicenseStatusView: View {
         .cornerRadius(8)
     }
 
-    private func activateLicense() async {
-        let trimmedKey = licenseKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let success = await licenseManager.activateLicense(trimmedKey)
+    @MainActor
+    private func validateLicenseKey() async {
+        // Ensure atomic state update at start
+        guard !licenseKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            validationError = "Please enter a license key"
+            return
+        }
+
+        // Clear previous error and set loading state
+        validationError = nil
+        isValidating = true
+
+        defer {
+            // Ensure loading state is cleared
+            isValidating = false
+        }
+
+        let success = await licenseManager.validateLicense(licenseKeyInput.trimmingCharacters(in: .whitespacesAndNewlines))
 
         if success {
-            licenseKey = ""
-            dismiss()
+            // Success - update state atomically
+            licenseKeyInput = ""
+            showingInput = false
+            await refreshLicenseStatus()
+        } else {
+            // Failure - show error
+            validationError = licenseManager.errorMessage ?? "License validation failed"
         }
+    }
+
+    @MainActor
+    private func refreshLicenseStatus() async {
+        await licenseManager.refreshLicenseStatus()
     }
 }
 

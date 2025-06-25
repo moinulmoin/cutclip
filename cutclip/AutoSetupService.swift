@@ -56,13 +56,35 @@ class AutoSetupService: ObservableObject, Sendable {
 
         } catch {
             await MainActor.run {
-                if error is URLError {
-                    self.setupError = "Unable to download required tools. Please check your internet connection and try again."
-                } else if error.localizedDescription.contains("space") {
-                    self.setupError = "Setup failed. Please ensure you have sufficient disk space and try again."
+                // Provide specific error messages based on failure type
+                if let setupError = error as? SetupError {
+                    switch setupError {
+                    case .downloadFailed(let message):
+                        if message.contains("network") || message.contains("connection") {
+                            self.setupError = "No internet connection. Please check your connection and try again."
+                        } else if message.contains("space") || message.contains("disk") {
+                            self.setupError = "Insufficient disk space. Please free up space and try again."
+                        } else {
+                            self.setupError = "Download failed. Please check your internet connection and try again."
+                        }
+                    case .extractionFailed(_):
+                        self.setupError = "Failed to extract downloaded files. Please try again or check disk space."
+                    case .verificationFailed(let message):
+                        self.setupError = "Setup verification failed: \(message). The downloaded tools may be corrupted."
+                    case .permissionError(_):
+                        self.setupError = "Permission denied. Please run the app with appropriate permissions."
+                    }
+                } else if error is URLError {
+                    self.setupError = "No internet connection. Please check your connection and try again."
+                } else if error.localizedDescription.contains("space") || error.localizedDescription.contains("disk") {
+                    self.setupError = "Insufficient disk space. Please free up space and try again."
+                } else if error.localizedDescription.contains("network") || error.localizedDescription.contains("connection") {
+                    self.setupError = "Network error. Please check your connection and try again."
                 } else {
-                    self.setupError = "Download interrupted. Click 'Try Again' to continue setup."
+                    self.setupError = "Setup failed: \(error.localizedDescription). Please try again."
                 }
+
+                print("❌ Setup failed with error: \(error)")
             }
         }
     }
@@ -71,8 +93,29 @@ class AutoSetupService: ObservableObject, Sendable {
         let ytDlpURL = URL(string: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos")!
         let destinationURL = binDirectory.appendingPathComponent("yt-dlp")
 
-        let (tempURL, _) = try await URLSession.shared.download(from: ytDlpURL)
-        try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+        // Retry logic with exponential backoff for large binary downloads
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (tempURL, _) = try await URLSession.shared.download(from: ytDlpURL)
+                try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+                if attempt > 1 {
+                    print("✅ yt-dlp download succeeded on attempt \(attempt)")
+                }
+                return
+            } catch {
+                lastError = error
+                print("⚠️ yt-dlp download failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
+        }
+
+        print("❌ yt-dlp download failed after 3 attempts")
+        throw lastError ?? SetupError.downloadFailed("Failed to download yt-dlp")
     }
 
     nonisolated private func downloadFFmpeg() async throws {
@@ -81,8 +124,31 @@ class AutoSetupService: ObservableObject, Sendable {
         let ffmpegURL = URL(string: "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip")!
         let destinationURL = binDirectory.appendingPathComponent("ffmpeg.zip")
 
-        let (tempURL, _) = try await URLSession.shared.download(from: ffmpegURL)
-        try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+        // Retry logic with exponential backoff for large binary downloads
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (tempURL, _) = try await URLSession.shared.download(from: ffmpegURL)
+                try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+                if attempt > 1 {
+                    print("✅ FFmpeg download succeeded on attempt \(attempt)")
+                }
+                break
+            } catch {
+                lastError = error
+                print("⚠️ FFmpeg download failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
+        }
+
+        if lastError != nil {
+            print("❌ FFmpeg download failed after 3 attempts")
+            throw lastError ?? SetupError.downloadFailed("Failed to download FFmpeg")
+        }
 
         // Extract the zip
         try await extractFFmpeg()

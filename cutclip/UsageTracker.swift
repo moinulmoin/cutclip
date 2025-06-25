@@ -14,21 +14,37 @@ class UsageTracker: ObservableObject {
     @Published var currentCredits: Int = 0
     @Published var hasExceededLimit: Bool = false
     @Published var isLoading: Bool = false
+    @Published var hasInitializedCredits: Bool = false
+
+    // Thread-safe cache manager
+    private let cacheManager = CacheManager()
 
     // MARK: - API Configuration
-    private let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "http://localhost:3000/api"
-    private let usersEndpoint = "/users"
+    private var baseURL: String { APIConfiguration.baseURL }
     private let maxFreeCredits = 3
 
     private init() {}
 
     // MARK: - Users API Methods
 
-    /// GET /api/users/check-device
-    func checkDeviceStatus() async throws -> UsageDeviceStatusResponse {
+    /// GET /api/users/check-device (with smart caching)
+    func checkDeviceStatus(forceRefresh: Bool = false) async throws -> UsageDeviceStatusResponse {
+        // Check if we can use cached data
+        if !forceRefresh {
+            let cacheValidity = await getCacheValidity()
+            if let cachedResult = await cacheManager.getCachedData(maxAge: cacheValidity) {
+                print("📱 Using cached device status (age: \(Int(cachedResult.age/60)) minutes)")
+                return .found(cachedResult.data)
+            }
+        }
+
+        print("📱 Fetching fresh device status from API")
         let deviceId = DeviceIdentifier.shared.getDeviceID()
 
-        let urlString = "\(baseURL)\(usersEndpoint)/check-device?deviceId=\(deviceId)"
+        guard let encodedDeviceId = deviceId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw UsageError.invalidURL
+        }
+        let urlString = "\(baseURL)\(APIConfiguration.Endpoints.checkDevice)?deviceId=\(encodedDeviceId)"
         guard let url = URL(string: urlString) else {
             throw UsageError.invalidURL
         }
@@ -36,39 +52,70 @@ class UsageTracker: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        // Retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let request = APIConfiguration.createRequest(url: url)
+                let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw UsageError.invalidResponse
-        }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw UsageError.invalidResponse
+                }
 
-        if httpResponse.statusCode == 200 {
-            let result = try JSONDecoder().decode(DeviceCheckResponse.self, from: data)
+                if httpResponse.statusCode == 200 {
+                    let result = try JSONDecoder().decode(DeviceCheckResponse.self, from: data)
 
-            if let deviceData = result.data {
-                currentCredits = deviceData.freeCredits
-                hasExceededLimit = deviceData.freeCredits <= 0 && !hasValidLicense(deviceData.user?.license)
-                return .found(deviceData)
-            } else {
-                return .notFound
+                    if let deviceData = result.data {
+                        await MainActor.run {
+                            self.currentCredits = deviceData.freeCredits
+                            self.hasExceededLimit = deviceData.freeCredits <= 0 && !self.hasValidLicense(deviceData.user?.license)
+                            self.hasInitializedCredits = true
+                        }
+
+                        // Cache the successful response (thread-safe)
+                        await cacheManager.setCachedData(deviceData)
+                        if attempt > 1 {
+                            print("✅ Check device status succeeded on attempt \(attempt)")
+                        }
+                        return .found(deviceData)
+                    } else {
+                        return .notFound
+                    }
+                } else {
+                    throw UsageError.serverError(httpResponse.statusCode)
+                }
+            } catch {
+                lastError = error
+                print("⚠️ Check device status failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                // Invalidate cache on network errors to prevent stale data
+                if attempt == 3 && error is URLError {
+                    await cacheManager.invalidate()
+                    print("🗑️ Cache invalidated due to network errors")
+                }
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
             }
-        } else {
-            throw UsageError.serverError(httpResponse.statusCode)
         }
+
+        print("❌ Check device status failed after 3 attempts")
+        throw lastError ?? UsageError.serverError(500)
     }
 
     /// POST /api/users/create-device (Create device only - no user until license)
     func createDeviceOnly() async throws -> CreateDeviceResponse {
         let deviceId = DeviceIdentifier.shared.getDeviceID()
 
-        let urlString = "\(baseURL)\(usersEndpoint)/create-device"
+        let urlString = "\(baseURL)\(APIConfiguration.Endpoints.createDevice)"
         guard let url = URL(string: urlString) else {
             throw UsageError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = APIConfiguration.createRequest(url: url, method: "POST")
 
         let body = CreateDeviceRequest(
             deviceId: deviceId,
@@ -89,6 +136,11 @@ class UsageTracker: ObservableObject {
         if httpResponse.statusCode == 200 {
             let result = try JSONDecoder().decode(CreateDeviceResponse.self, from: data)
             currentCredits = maxFreeCredits // New devices get 3 free credits
+            hasInitializedCredits = true
+
+            // Invalidate cache after creating new device
+            await invalidateCache()
+            print("🗑️ Cache invalidated after creating new device")
             print("📱 Device created with \(maxFreeCredits) free credits")
             return result
         } else {
@@ -100,14 +152,12 @@ class UsageTracker: ObservableObject {
     func updateDeviceLicense(_ license: String) async throws -> UpdateDeviceResponse {
         let deviceId = DeviceIdentifier.shared.getDeviceID()
 
-        let urlString = "\(baseURL)\(usersEndpoint)/update-device"
+        let urlString = "\(baseURL)\(APIConfiguration.Endpoints.updateDevice)"
         guard let url = URL(string: urlString) else {
             throw UsageError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = APIConfiguration.createRequest(url: url, method: "PUT")
 
         let body = UpdateDeviceRequest(deviceId: deviceId, license: license)
         request.httpBody = try JSONEncoder().encode(body)
@@ -142,14 +192,12 @@ class UsageTracker: ObservableObject {
     func decrementFreeCredits() async throws -> DecrementCreditsResponse {
         let deviceId = DeviceIdentifier.shared.getDeviceID()
 
-        let urlString = "\(baseURL)\(usersEndpoint)/decrement-free-credits"
+        let urlString = "\(baseURL)\(APIConfiguration.Endpoints.decrementCredits)"
         guard let url = URL(string: urlString) else {
             throw UsageError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = APIConfiguration.createRequest(url: url, method: "PUT")
 
         let body = DecrementCreditsRequest(deviceId: deviceId)
         request.httpBody = try JSONEncoder().encode(body)
@@ -157,28 +205,75 @@ class UsageTracker: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw UsageError.invalidResponse
-        }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw UsageError.invalidResponse
+                }
 
-        if httpResponse.statusCode == 200 {
-            let result = try JSONDecoder().decode(DecrementCreditsResponse.self, from: data)
-            if let deviceData = result.data?.device {
-                currentCredits = deviceData.freeCredits
-                hasExceededLimit = deviceData.freeCredits <= 0 && !SecureStorage.shared.hasValidLicense()
-                print("📊 Free credits decremented: \(deviceData.freeCredits) remaining")
+                if httpResponse.statusCode == 200 {
+                    let result = try JSONDecoder().decode(DecrementCreditsResponse.self, from: data)
+                    if let deviceData = result.data?.device {
+                        await MainActor.run {
+                            self.currentCredits = deviceData.freeCredits
+                            self.hasExceededLimit = deviceData.freeCredits <= 0 && !SecureStorage.shared.hasValidLicense()
+                            self.hasInitializedCredits = true
+                        }
+
+                        // Update cache with new credit count (thread-safe)
+                        await self.cacheManager.updateCredits(deviceData.freeCredits)
+
+                        print("📊 Free credits decremented: \(deviceData.freeCredits) remaining")
+                    }
+                    if attempt > 1 {
+                        print("✅ Decrement credits succeeded on attempt \(attempt)")
+                    }
+                    return result
+                } else if httpResponse.statusCode == 400 {
+                    // Insufficient credits - don't retry this error
+                    let result = try JSONDecoder().decode(DecrementCreditsResponse.self, from: data)
+                    await MainActor.run {
+                        self.hasExceededLimit = true
+                    }
+                    throw UsageError.insufficientCredits(result.message)
+                } else {
+                    throw UsageError.serverError(httpResponse.statusCode)
+                }
+            } catch let error as UsageError {
+                // Don't retry business logic errors like insufficient credits
+                if case .insufficientCredits = error {
+                    throw error
+                }
+                lastError = error
+                print("⚠️ Decrement credits failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            } catch {
+                lastError = error
+                print("⚠️ Decrement credits failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                // Invalidate cache on final network error to force fresh fetch next time
+                if attempt == 3 && error is URLError {
+                    await cacheManager.invalidate()
+                    print("🗑️ Cache invalidated due to decrement credits network error")
+                }
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
             }
-            return result
-        } else if httpResponse.statusCode == 400 {
-            // Insufficient credits
-            let result = try JSONDecoder().decode(DecrementCreditsResponse.self, from: data)
-            hasExceededLimit = true
-            throw UsageError.insufficientCredits(result.message)
-        } else {
-            throw UsageError.serverError(httpResponse.statusCode)
         }
+
+        print("❌ Decrement credits failed after 3 attempts")
+        throw lastError ?? UsageError.serverError(500)
     }
 
     // MARK: - Main App Flow
@@ -229,6 +324,10 @@ class UsageTracker: ObservableObject {
     func updateLicense(_ license: String) async throws {
         print("📄 Adding license to device (will create user)...")
         _ = try await updateDeviceLicense(license)
+
+        // CRITICAL: Invalidate cache after updating license
+        await invalidateCache()
+        print("🗑️ Cache invalidated after updating device license")
     }
 
     // MARK: - Usage Logic
@@ -255,8 +354,8 @@ class UsageTracker: ObservableObject {
             return .licensed
         }
 
-        // If still loading/initializing, show max credits to avoid "trial expired" during setup
-        if isLoading && currentCredits == 0 {
+        // If we haven't initialized credits yet, assume user has credits to avoid blocking
+        if !hasInitializedCredits {
             return .freeTrial(remaining: maxFreeCredits)
         }
 
@@ -274,6 +373,37 @@ class UsageTracker: ObservableObject {
         return license.hasPrefix("PRO-") || license.hasPrefix("ENTERPRISE-")
     }
 
+    // MARK: - Caching Logic
+
+    private func getCacheValidity() async -> TimeInterval {
+        let hasLicense = SecureStorage.shared.hasValidLicense()
+
+        // Check if there was a recent cache invalidation (state change)
+        let recentCacheInvalidation = await cacheManager.hasRecentInvalidation()
+        if recentCacheInvalidation {
+            return 0 // Force fresh data after state changes
+        }
+
+        // No cache during critical operations or for trial users close to limit
+        if currentCredits <= 1 && !hasLicense {
+            return 30 // 30 seconds for users about to expire
+        }
+
+        // Check if user just used credits (force fresh check)
+        let recentCreditUsage = await cacheManager.hasRecentCreditUpdate()
+        if recentCreditUsage {
+            return 60 // 1 minute after credit usage
+        }
+
+        // Longer cache for licensed users, shorter for free users
+        return hasLicense ? (10 * 60) : (3 * 60) // 10 minutes : 3 minutes
+    }
+
+    /// Force refresh cache (call when credits are used or license changes)
+    func invalidateCache() async {
+        await cacheManager.invalidate()
+    }
+
     // MARK: - Analytics Data
 
     func getUsageAnalytics() -> [String: Any] {
@@ -284,6 +414,73 @@ class UsageTracker: ObservableObject {
             "has_license": SecureStorage.shared.hasValidLicense(),
             "usage_status": getUsageStatus().rawValue
         ]
+    }
+}
+
+// MARK: - Thread-Safe Cache Manager
+
+private actor CacheManager {
+    private var lastFetchTime: Date?
+    private var lastInvalidationTime: Date?
+    private var lastCreditUpdateTime: Date?
+    private var cachedData: DeviceData?
+    private let defaultCacheValidity: TimeInterval = 10 * 60 // 10 minutes
+
+    func getCachedData(maxAge: TimeInterval? = nil) -> (data: DeviceData, age: TimeInterval)? {
+        guard let lastFetch = lastFetchTime,
+              let data = cachedData else {
+            return nil
+        }
+
+        let age = Date().timeIntervalSince(lastFetch)
+        let maxValidAge = maxAge ?? defaultCacheValidity
+
+        guard age < maxValidAge else {
+            return nil
+        }
+
+        return (data: data, age: age)
+    }
+
+    func setCachedData(_ data: DeviceData) {
+        self.cachedData = data
+        self.lastFetchTime = Date()
+    }
+
+    func invalidate() {
+        self.cachedData = nil
+        self.lastFetchTime = nil
+        self.lastInvalidationTime = Date()
+        print("🗑️ Cache invalidated")
+    }
+
+    func hasRecentInvalidation() -> Bool {
+        guard let invalidationTime = lastInvalidationTime else { return false }
+        return Date().timeIntervalSince(invalidationTime) < 120 // 2 minutes
+    }
+
+    func updateCredits(_ newCredits: Int) {
+        // Only update timestamp if credits actually changed
+        if let currentData = cachedData, currentData.freeCredits != newCredits {
+            self.lastCreditUpdateTime = Date()
+            print("📊 Credits changed from \(currentData.freeCredits) to \(newCredits)")
+
+            // Create a new DeviceData with updated credits
+            let updatedData = DeviceData(
+                id: currentData.id,
+                deviceId: currentData.deviceId,
+                freeCredits: newCredits,
+                user: currentData.user
+            )
+            self.cachedData = updatedData
+        }
+
+        self.lastFetchTime = Date() // Reset cache time
+    }
+
+    func hasRecentCreditUpdate() -> Bool {
+        guard let updateTime = lastCreditUpdateTime else { return false }
+        return Date().timeIntervalSince(updateTime) < 120 // 2 minutes
     }
 }
 

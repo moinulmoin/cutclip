@@ -13,13 +13,21 @@ struct ContentView: View {
     @StateObject private var licenseManager = LicenseManager.shared
     @StateObject private var usageTracker = UsageTracker.shared
     @AppStorage("disclaimerAccepted") private var disclaimerAccepted = false
-    
+    // Remove duplicate state - use LicenseManager's state instead
+
     var body: some View {
         Group {
             if !disclaimerAccepted {
                 DisclaimerView()
             } else if !binaryManager.isConfigured {
                 AutoSetupView(binaryManager: binaryManager)
+            } else if !licenseManager.isInitialized {
+                // Show loading while LicenseManager initializes
+                VStack {
+                    ProgressView("Initializing...")
+                        .scaleEffect(1.2)
+                }
+                .frame(width: 500, height: 450)
             } else if licenseManager.needsLicenseSetup {
                 LicenseStatusView()
                     .environmentObject(licenseManager)

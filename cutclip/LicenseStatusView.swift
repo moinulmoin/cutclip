@@ -13,10 +13,10 @@ struct LicenseStatusView: View {
     @EnvironmentObject private var errorHandler: ErrorHandler
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showingInput = false
     @State private var licenseKeyInput = ""
     @State private var isValidating = false
     @State private var validationError: String? = nil
+    @State private var validationTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 20) {
@@ -39,7 +39,7 @@ struct LicenseStatusView: View {
             Divider()
 
             // License Status Section
-            VStack(spacing: 16) {
+            VStack(spacing: 20) {
                 if licenseManager.isLoading {
                     VStack(spacing: 8) {
                         ProgressView()
@@ -52,8 +52,30 @@ struct LicenseStatusView: View {
                     // Current status display
                     statusDisplay
 
-                    // Action buttons
-                    actionButtons
+                    // License Input and Activation
+                    VStack(spacing: 12) {
+                        TextField("Enter your license key", text: $licenseKeyInput)
+                            .textFieldStyle(MinimalTextFieldStyle())
+                            .multilineTextAlignment(.center)
+
+                        Button(action: {
+                            validationTask?.cancel()
+                            validationTask = Task {
+                                await validateLicenseKey()
+                                validationTask = nil
+                            }
+                        }) {
+                            if isValidating {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(.white)
+                            } else {
+                                Text("Activate License")
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(licenseKeyInput.isEmpty || isValidating)
+                    }
 
                     // Error display
                     if let error = validationError ?? licenseManager.errorMessage {
@@ -62,21 +84,43 @@ struct LicenseStatusView: View {
                             .foregroundColor(.red)
                             .padding(.horizontal)
                             .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+
+                    Divider()
+                        .padding(.vertical, 8)
+
+                    // Action buttons
+                    actionButtons
                 }
             }
         }
         .padding()
-        .frame(maxWidth: 500)
+        .frame(width: 420, height: 450)
         .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(12)
-        .sheet(isPresented: $showingInput) {
-            licenseInputSheet
+        .overlay(alignment: .topTrailing) {
+            // Explicit Close button
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.secondary, .tertiary)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.escape, modifiers: [])
+            .padding()
         }
         .onAppear {
-            Task {
+            validationTask?.cancel()
+            validationTask = Task {
                 await refreshLicenseStatus()
+                validationTask = nil
             }
+        }
+        .onDisappear {
+            validationTask?.cancel()
         }
     }
 
@@ -145,59 +189,33 @@ struct LicenseStatusView: View {
 
     @ViewBuilder
     private var actionButtons: some View {
-        HStack(spacing: 12) {
-            Button("Get License") {
-                if let url = URL(string: "https://clipcut.moinulmoin.com") {
+        VStack(spacing: 8) {
+            Text("Don't have a license?")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button("Get Pro License - $4.99") {
+                if let url = URL(string: "https://cutclip.moinulmoin.com") {
                     NSWorkspace.shared.open(url)
                 }
             }
-            .buttonStyle(.bordered)
-
-            Button("Activate") {
-                showingInput = true
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(licenseKeyInput.isEmpty || licenseManager.isLoading)
+            .buttonStyle(.link)
         }
-    }
-
-    @ViewBuilder
-    private var licenseInputSheet: some View {
-        VStack(spacing: 12) {
-            TextField("PRO-XXXXX-XXXXX", text: $licenseKeyInput)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.body, design: .monospaced))
-
-            HStack(spacing: 12) {
-                Button("Cancel") {
-                    showingInput = false
-                }
-                .buttonStyle(.bordered)
-
-                Button("Activate") {
-                    Task {
-                        await validateLicenseKey()
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(licenseKeyInput.isEmpty || licenseManager.isLoading)
-            }
-
-            if licenseManager.isLoading {
-                ProgressView("Validating...")
-                    .controlSize(.small)
-            }
-        }
-        .padding(16)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
     }
 
     @MainActor
     private func validateLicenseKey() async {
+        let key = licenseKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+
         // Ensure atomic state update at start
-        guard !licenseKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            validationError = "Please enter a license key"
+        guard !key.isEmpty else {
+            validationError = "Please enter a license key."
+            return
+        }
+
+        // Perform basic client-side validation
+        guard ValidationUtils.isValidLicenseKeyFormat(key) else {
+            validationError = "License can only contain letters, numbers, and hyphens."
             return
         }
 
@@ -210,13 +228,14 @@ struct LicenseStatusView: View {
             isValidating = false
         }
 
-        let success = await licenseManager.validateLicense(licenseKeyInput.trimmingCharacters(in: .whitespacesAndNewlines))
+        let success = await licenseManager.validateLicense(key)
 
         if success {
             // Success - update state atomically
             licenseKeyInput = ""
-            showingInput = false
             await refreshLicenseStatus()
+            // Optional: dismiss the view if it's a sheet
+            // dismiss()
         } else {
             // Failure - show error
             validationError = licenseManager.errorMessage ?? "License validation failed"

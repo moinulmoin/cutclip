@@ -21,15 +21,29 @@ class BinaryManager: ObservableObject, Sendable {
     private var verificationTask: Task<Void, Never>?
 
     nonisolated init() {
-        // Create app support directory
+        // Create app support directory with graceful error handling
         let fileManager = FileManager.default
-        guard let supportDir = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            fatalError("Unable to access Application Support directory")
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("CutClip")
+        
+        if let supportDir = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let appSupportDir = supportDir.appendingPathComponent("CutClip")
+            
+            // Create directory if it doesn't exist
+            do {
+                try fileManager.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
+                appSupportDirectory = appSupportDir
+            } catch {
+                print("❌ Failed to create app support directory: \(error)")
+                // Fall back to temp directory
+                appSupportDirectory = tempDir
+                try? fileManager.createDirectory(at: appSupportDirectory, withIntermediateDirectories: true)
+            }
+        } else {
+            print("❌ Unable to access Application Support directory, using temp directory")
+            // Fall back to temp directory
+            appSupportDirectory = tempDir
+            try? fileManager.createDirectory(at: appSupportDirectory, withIntermediateDirectories: true)
         }
-        appSupportDirectory = supportDir.appendingPathComponent("CutClip")
-
-        // Create directory if it doesn't exist
-        try? fileManager.createDirectory(at: appSupportDirectory, withIntermediateDirectories: true)
 
         // Check for existing binaries
         Task { @MainActor in
@@ -103,6 +117,12 @@ class BinaryManager: ObservableObject, Sendable {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: binaryPath)
             process.arguments = testArgs
+            
+            // Secure process environment - restrict PATH and environment
+            process.environment = [
+                "PATH": "/usr/bin:/bin",
+                "HOME": NSTemporaryDirectory()
+            ]
 
             do {
                 try process.run()

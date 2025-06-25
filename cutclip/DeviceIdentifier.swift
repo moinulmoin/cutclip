@@ -7,6 +7,7 @@
 
 import Foundation
 import IOKit
+import CommonCrypto
 
 class DeviceIdentifier {
     nonisolated(unsafe) static let shared = DeviceIdentifier()
@@ -91,32 +92,36 @@ class DeviceIdentifier {
     }
 
     private func getMACAddress() -> String? {
-        // Get primary network interface MAC address
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/sbin/ifconfig")
-        task.arguments = ["en0"]
+        var iterator: io_iterator_t = 0
 
-        let pipe = Pipe()
-        task.standardOutput = pipe
+        // Create a matching dictionary to find network interfaces
+        let matchingDict = IOServiceMatching("IOEthernetInterface") as NSMutableDictionary
+        matchingDict["IOPropertyMatch"] = ["IOPrimaryInterface": true]
 
-        do {
-            try task.run()
-            task.waitUntilExit()
+        // Use the matching dictionary to get the services
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &iterator) == kIOReturnSuccess else {
+            return nil
+        }
+        defer { IOObjectRelease(iterator) }
 
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
+        // Iterate over the services
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            defer { IOObjectRelease(service) }
+            var parentService: io_object_t = 0
 
-            // Extract MAC address using regex
-            let macPattern = #"ether ([a-f0-9:]{17})"#
-            let regex = try NSRegularExpression(pattern: macPattern)
-            let range = NSRange(output.startIndex..<output.endIndex, in: output)
+            // The MAC address is on the parent service (IOEthernetController)
+            if IORegistryEntryGetParentEntry(service, "IOEthernetController", &parentService) == kIOReturnSuccess {
+                defer { IOObjectRelease(parentService) }
 
-            if let match = regex.firstMatch(in: output, range: range) {
-                let macRange = Range(match.range(at: 1), in: output)!
-                return String(output[macRange])
+                if let macAddressData = IORegistryEntryCreateCFProperty(parentService, "IOMACAddress" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Data {
+                    let macAddressString = macAddressData.map { String(format: "%02x", $0) }.joined(separator: ":")
+                    return macAddressString
+                }
             }
-        } catch {
-            print("Failed to get MAC address: \(error)")
+
+            // Get the next service
+            service = IOIteratorNext(iterator)
         }
 
         return nil
@@ -184,6 +189,3 @@ extension String {
         return hash.map { String(format: "%02x", $0) }.joined()
     }
 }
-
-// Import CommonCrypto for hashing
-import CommonCrypto

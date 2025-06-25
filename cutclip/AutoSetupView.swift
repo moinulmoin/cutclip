@@ -13,6 +13,7 @@ struct AutoSetupView: View {
     @State private var hasStartedSetup = false
     @State private var animateIcon = false
     @State private var showContent = false
+    @State private var setupTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 40) {
@@ -80,12 +81,20 @@ struct AutoSetupView: View {
             animateIcon = true
             showContent = true
         }
+        .onDisappear {
+            // Cancel setup task if view disappears
+            setupTask?.cancel()
+        }
     }
 
     private func startSetup() {
         hasStartedSetup = true
-        Task {
+        // Cancel any existing setup task
+        setupTask?.cancel()
+        
+        setupTask = Task {
             await setupService.performAutoSetup()
+            setupTask = nil
         }
     }
 

@@ -62,8 +62,9 @@ class DownloadService: ObservableObject, Sendable {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("CutClip")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // Let yt-dlp use the video title but sanitize it for filesystem safety
-        let outputTemplate = tempDir.appendingPathComponent("%(title)s.%(ext)s").path
+        // Generate a unique, deterministic path for the output file.
+        let uniqueFilename = "\(UUID().uuidString).mp4"
+        let outputPath = tempDir.appendingPathComponent(uniqueFilename)
 
         // Use an actor to manage state instead of captured variables
         let stateManager = ProcessStateManager()
@@ -72,8 +73,8 @@ class DownloadService: ObservableObject, Sendable {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: ytDlpPath)
             process.arguments = [
-                "--format", "best[height<=720]", // Limit to 720p for faster downloads
-                "--output", outputTemplate,
+                "--format", "best[height<=720][ext=mp4]/best[height<=720]", // Prioritize mp4
+                "--output", outputPath.path, // Use the deterministic path
                 "--no-playlist",
                 job.url
             ]
@@ -83,31 +84,20 @@ class DownloadService: ObservableObject, Sendable {
             process.standardOutput = pipe
 
             // Use thread-safe actor for download tracking
-            let downloadTracker = DownloadTracker()
+            let errorBuffer = ErrorBuffer()
 
             pipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if !data.isEmpty {
                     Task {
-                        await downloadTracker.appendData(data)
+                        await errorBuffer.appendData(data)
                         let output = String(data: data, encoding: .utf8) ?? ""
-
-                        // Debug: Print yt-dlp output to help diagnose file path issues
-                        if !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            print("yt-dlp output: \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
-                        }
 
                         // Parse progress from yt-dlp output
                         if let progress = parseProgress(from: output) {
                             await MainActor.run {
                                 self.updateJobProgress(progress)
                             }
-                        }
-
-                        // Look for downloaded file path
-                        if let filePath = parseDownloadedFilePath(from: output) {
-                            print("Parsed file path: \(filePath)")
-                            await downloadTracker.setDownloadedFilePath(filePath)
                         }
                     }
                 }
@@ -132,24 +122,18 @@ class DownloadService: ObservableObject, Sendable {
 
                     if !didResume {
                         if process.terminationStatus == 0 {
-                            if let filePath = await downloadTracker.downloadedFilePath {
-                                print("DEBUG: Parsed file path: \(filePath)")
-                                // Verify the parsed file actually exists
-                                if FileManager.default.fileExists(atPath: filePath) {
-                                    print("DEBUG: File exists at parsed path")
-                                    continuation.resume(returning: filePath)
-                                } else {
-                                    print("DEBUG: File does NOT exist at parsed path, searching directory")
-                                    // File doesn't exist at parsed path, fall back to directory search
-                                    self.findDownloadedFile(in: tempDir, continuation: continuation)
-                                }
+                            // The process succeeded, now verify the deterministic file exists.
+                            if FileManager.default.fileExists(atPath: outputPath.path) {
+                                continuation.resume(returning: outputPath.path)
                             } else {
-                                print("DEBUG: No parsed path, searching directory")
-                                // No parsed path, search directory
-                                self.findDownloadedFile(in: tempDir, continuation: continuation)
+                                // This should rarely happen, but it's a critical failure if it does.
+                                let outputData = await errorBuffer.outputData
+                                let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error, file not created."
+                                print("❌ yt-dlp claimed success, but output file is missing at \(outputPath.path)")
+                                continuation.resume(throwing: DownloadError.downloadFailed(errorOutput))
                             }
                         } else {
-                            let outputData = await downloadTracker.outputData
+                            let outputData = await errorBuffer.outputData
                             let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error"
                             continuation.resume(throwing: DownloadError.downloadFailed(errorOutput))
                         }
@@ -275,14 +259,21 @@ class DownloadService: ObservableObject, Sendable {
     private nonisolated func cleanupTempDirectory(_ tempDir: URL) {
         Task {
             do {
-                // Only remove files older than 1 hour to avoid interfering with active downloads
-                let cutoffDate = Date().addingTimeInterval(-3600)
+                // Only remove files older than 2 hours to avoid interfering with active downloads
+                let cutoffDate = Date().addingTimeInterval(-7200) // 2 hours instead of 1
                 let files = try FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: [.creationDateKey])
 
                 for file in files {
                     if let creationDate = try? file.resourceValues(forKeys: [.creationDateKey]).creationDate,
                        creationDate < cutoffDate {
-                        try? FileManager.default.removeItem(at: file)
+
+                        // Check if file is still being accessed before deletion
+                        if !isFileInUse(file) {
+                            try? FileManager.default.removeItem(at: file)
+                            print("🗑️ Cleaned up old temp file: \(file.lastPathComponent)")
+                        } else {
+                            print("⚠️ Skipping cleanup of file in use: \(file.lastPathComponent)")
+                        }
                     }
                 }
             } catch {
@@ -290,19 +281,27 @@ class DownloadService: ObservableObject, Sendable {
             }
         }
     }
+
+    /// Check if file is currently being accessed by another process
+    private nonisolated func isFileInUse(_ fileURL: URL) -> Bool {
+        do {
+            // Try to open file for writing - if it fails, file may be in use
+            let fileHandle = try FileHandle(forWritingTo: fileURL)
+            fileHandle.closeFile()
+            return false
+        } catch {
+            // If we can't open for writing, assume it's in use
+            return true
+        }
+    }
 }
 
-// Thread-safe actor for download tracking
-private actor DownloadTracker {
+// Thread-safe actor for buffering error output
+private actor ErrorBuffer {
     private(set) var outputData = Data()
-    private(set) var downloadedFilePath: String?
 
     func appendData(_ data: Data) {
         outputData.append(data)
-    }
-
-    func setDownloadedFilePath(_ filePath: String) {
-        downloadedFilePath = filePath
     }
 }
 
@@ -334,105 +333,6 @@ private nonisolated func parseProgress(from output: String) -> Double? {
     }
 
     return nil
-}
-
-private nonisolated func parseDownloadedFilePath(from output: String) -> String? {
-    // Look for multiple possible patterns from yt-dlp output (in priority order)
-    let patterns = [
-        // Standard download completion with path
-        #"\[download\] 100(?:\.0)?% of .+? in .+? to (.+?)(?:\n|$)"#,
-        #"\[download\] 100(?:\.0)?% of .+? to (.+?)(?:\n|$)"#,
-
-        // Standard destination announcement
-        #"\[download\] Destination: (.+?)(?:\n|$)"#,
-
-        // Already downloaded cases
-        #"\[download\] (.+?) has already been downloaded"#,
-        #"has already been downloaded and merged into \"?(.+?)\"?"#,
-
-        // Format merging patterns
-        #"\[merger\] Merging formats into \"(.+?)\""#,
-        #"\[ffmpeg\] Merging formats into \"(.+?)\""#,
-
-        // File operations
-        #"Deleting original file (.+?) \(pass -k to keep\)"#,
-
-        // Generic file path patterns (last resort)
-        #"\"([^\"]+\.(?:mp4|webm|mkv|avi|mov|flv|m4v))\""#,
-        #"([^\s]+\.(?:mp4|webm|mkv|avi|mov|flv|m4v))(?:\s|$)"#
-    ]
-
-    for pattern in patterns {
-        if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
-            let range = NSRange(output.startIndex..<output.endIndex, in: output)
-
-            if let match = regex.firstMatch(in: output, range: range) {
-                let matchRange = Range(match.range(at: 1), in: output)!
-                let filePath = String(output[matchRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-
-                // Clean and validate the path
-                let cleanPath = cleanFilePath(filePath)
-
-                // Convert to absolute path if relative
-                let absolutePath = makeAbsolutePath(cleanPath)
-
-                // Final validation
-                if isValidFilePath(absolutePath) {
-                    print("📁 Parsed file path: \(absolutePath)")
-                    return absolutePath
-                }
-            }
-        }
-    }
-
-    return nil
-}
-
-private nonisolated func cleanFilePath(_ path: String) -> String {
-    // Remove quotes (single, double, and smart quotes)
-    var cleaned = path
-
-    // Remove all types of quotes
-    let quotesToRemove = ["\"", "'", "\u{201C}", "\u{201D}", "\u{2018}", "\u{2019}"]
-    for quote in quotesToRemove {
-        cleaned = cleaned.replacingOccurrences(of: quote, with: "")
-    }
-
-    // Remove any trailing line endings or control characters
-    cleaned = cleaned.replacingOccurrences(of: "\n", with: "")
-        .replacingOccurrences(of: "\r", with: "")
-        .replacingOccurrences(of: "\t", with: "")
-
-    return cleaned.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-}
-
-private nonisolated func makeAbsolutePath(_ path: String) -> String {
-    // If already absolute, return as-is
-    if path.hasPrefix("/") {
-        return path
-    }
-
-    // If relative, make it absolute based on current working directory
-    let currentDir = FileManager.default.currentDirectoryPath
-    return URL(fileURLWithPath: currentDir).appendingPathComponent(path).path
-}
-
-private nonisolated func isValidFilePath(_ path: String) -> Bool {
-    // Basic validation
-    guard !path.isEmpty else { return false }
-
-    // Must be absolute path for security
-    guard path.hasPrefix("/") else { return false }
-
-    // Check for dangerous patterns (but allow legitimate file paths)
-    let dangerousPatterns = ["\0", ";", "|", "&", "`"]
-    for pattern in dangerousPatterns {
-        if path.contains(pattern) {
-            return false
-        }
-    }
-
-    return true
 }
 
 enum DownloadError: LocalizedError, Sendable {

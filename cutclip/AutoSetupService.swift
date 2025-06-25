@@ -159,6 +159,12 @@ class AutoSetupService: ObservableObject, Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
         process.arguments = ["-o", zipURL.path, "-d", binDirectory.path]
+        
+        // Secure process environment
+        process.environment = [
+            "PATH": "/usr/bin:/bin",
+            "HOME": NSTemporaryDirectory()
+        ]
 
         try process.run()
         process.waitUntilExit()
@@ -212,6 +218,12 @@ class AutoSetupService: ObservableObject, Sendable {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: path)
             process.arguments = args
+            
+            // Secure process environment
+            process.environment = [
+                "PATH": "/usr/bin:/bin",
+                "HOME": NSTemporaryDirectory()
+            ]
 
             process.terminationHandler = { process in
                 continuation.resume(returning: process.terminationStatus == 0)

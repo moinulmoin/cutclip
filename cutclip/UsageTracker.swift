@@ -57,7 +57,7 @@ class UsageTracker: ObservableObject {
         for attempt in 1...3 {
             do {
                 let request = APIConfiguration.createRequest(url: url)
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await APIConfiguration.performSecureRequest(request)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw UsageError.invalidResponse
@@ -127,25 +127,46 @@ class UsageTracker: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await APIConfiguration.performSecureRequest(request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw UsageError.invalidResponse
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw UsageError.invalidResponse
+                }
+
+                if httpResponse.statusCode == 200 {
+                    let result = try JSONDecoder().decode(CreateDeviceResponse.self, from: data)
+                    currentCredits = maxFreeCredits // New devices get 3 free credits
+                    hasInitializedCredits = true
+
+                    // Invalidate cache after creating new device
+                    await invalidateCache()
+                    print("🗑️ Cache invalidated after creating new device")
+                    print("📱 Device created with \(maxFreeCredits) free credits")
+
+                    if attempt > 1 {
+                        print("✅ Create device succeeded on attempt \(attempt)")
+                    }
+                    return result
+                } else {
+                    throw UsageError.serverError(httpResponse.statusCode)
+                }
+            } catch {
+                lastError = error
+                print("⚠️ Create device failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
         }
 
-        if httpResponse.statusCode == 200 {
-            let result = try JSONDecoder().decode(CreateDeviceResponse.self, from: data)
-            currentCredits = maxFreeCredits // New devices get 3 free credits
-            hasInitializedCredits = true
-
-            // Invalidate cache after creating new device
-            await invalidateCache()
-            print("🗑️ Cache invalidated after creating new device")
-            print("📱 Device created with \(maxFreeCredits) free credits")
-            return result
-        } else {
-            throw UsageError.serverError(httpResponse.statusCode)
-        }
+        print("❌ Create device failed after 3 attempts")
+        throw lastError ?? UsageError.serverError(500)
     }
 
     /// PUT /api/users/update-device (Creates user when license is added)
@@ -165,27 +186,48 @@ class UsageTracker: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await APIConfiguration.performSecureRequest(request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw UsageError.invalidResponse
-        }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw UsageError.invalidResponse
+                }
 
-        if httpResponse.statusCode == 200 {
-            let result = try JSONDecoder().decode(UpdateDeviceResponse.self, from: data)
-            // Update local license storage
-            let licenseStored = SecureStorage.shared.storeLicense(license, deviceID: deviceId)
-            if licenseStored {
-                print("📄 License updated: \(result.message)")
-                print("👤 User created and linked to device")
-                print("🔐 License stored securely on device")
-            } else {
-                print("⚠️ Warning: License updated on server but failed to store locally")
+                if httpResponse.statusCode == 200 {
+                    let result = try JSONDecoder().decode(UpdateDeviceResponse.self, from: data)
+                    // Update local license storage
+                    let licenseStored = SecureStorage.shared.storeLicense(license, deviceID: deviceId)
+                    if licenseStored {
+                        print("📄 License updated: \(result.message)")
+                        print("👤 User created and linked to device")
+                        print("🔐 License stored securely on device")
+                    } else {
+                        print("⚠️ Warning: License updated on server but failed to store locally")
+                    }
+
+                    if attempt > 1 {
+                        print("✅ Update device license succeeded on attempt \(attempt)")
+                    }
+                    return result
+                } else {
+                    throw UsageError.serverError(httpResponse.statusCode)
+                }
+            } catch {
+                lastError = error
+                print("⚠️ Update device license failed on attempt \(attempt)/3: \(error.localizedDescription)")
+
+                if attempt < 3 {
+                    let delay = min(2.0 * Double(attempt), 5.0)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
             }
-            return result
-        } else {
-            throw UsageError.serverError(httpResponse.statusCode)
         }
+
+        print("❌ Update device license failed after 3 attempts")
+        throw lastError ?? UsageError.serverError(500)
     }
 
     /// PUT /api/users/decrement-free-credits (Only used for devices without license)
@@ -209,7 +251,7 @@ class UsageTracker: ObservableObject {
         var lastError: Error?
         for attempt in 1...3 {
             do {
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await APIConfiguration.performSecureRequest(request)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw UsageError.invalidResponse

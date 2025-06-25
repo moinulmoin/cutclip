@@ -318,13 +318,24 @@ class LicenseManager: ObservableObject {
     }
 
     private func determineLicenseSetupRequired() -> Bool {
-        // If user has a valid license, no setup needed
-        if case .licensed = licenseStatus {
+        // Ensure license status and usage status are synchronized
+        let hasStoredLicense = secureStorage.hasValidLicense()
+        let usageStatus = usageTracker.getUsageStatus()
+        
+        // If we have a stored license but status shows unlicensed, there's a mismatch
+        if hasStoredLicense, case .licensed = licenseStatus {
             return false
         }
-
-        // Check if user has free credits available
-        let usageStatus = usageTracker.getUsageStatus()
+        
+        // If UsageTracker shows licensed but we don't have stored license, sync issue
+        if !hasStoredLicense, case .licensed = usageStatus {
+            // Clear the mismatch by invalidating cache
+            Task {
+                await usageTracker.invalidateCache()
+            }
+        }
+        
+        // Check final usage status after any synchronization
         switch usageStatus {
         case .licensed:
             return false

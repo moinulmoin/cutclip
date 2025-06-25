@@ -21,16 +21,19 @@ xcodebuild -project cutclip.xcodeproj -scheme cutclip -configuration Debug build
 The automated build script can have signing conflicts. Use this manual process instead:
 
 ```bash
-# 1. Build with distribution certificate
+# Build with distribution certificate
 xcodebuild -project cutclip.xcodeproj -scheme cutclip -configuration Release -derivedDataPath build CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application: Ideaplexa LLC (53P98M92V7)" clean build
 
-# 2. Create DMG (requires: brew install create-dmg)
+# Re-sign with secure timestamp for notarization (if needed)
+codesign --force --deep --timestamp --options=runtime --sign "Developer ID Application: Ideaplexa LLC (53P98M92V7)" build/Build/Products/Release/cutclip.app
+
+# Create DMG (requires: brew install create-dmg)
 create-dmg --volname "CutClip" --window-size 600 400 --icon-size 100 --app-drop-link 450 150 CutClip.dmg build/Build/Products/Release/cutclip.app
 
-# 3. Notarize (requires notarization keychain profile setup)
-xcrun notarytool submit CutClip.dmg --keychain-profile "notarization" --wait
+# Notarize (use correct keychain profile name)
+xcrun notarytool submit CutClip.dmg --keychain-profile "CUTCLIP_NOTARY" --wait
 
-# 4. Staple notarization
+# Staple notarization ticket to DMG
 xcrun stapler staple CutClip.dmg
 ```
 

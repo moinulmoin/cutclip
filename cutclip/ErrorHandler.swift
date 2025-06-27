@@ -133,6 +133,40 @@ class ErrorHandler: ObservableObject {
         return AppError.diskSpace("Setup failed. Please ensure you have sufficient disk space and try again.")
     }
     
+    // MARK: - Video Info Error Helpers
+    
+    nonisolated static func createVideoInfoTimeoutError() -> AppError {
+        return AppError.network("Video info request timed out. Please check your connection and try again.")
+    }
+    
+    nonisolated static func createVideoNotFoundError() -> AppError {
+        return AppError.invalidInput("Video not found. Please check the YouTube URL and try again.")
+    }
+    
+    nonisolated static func createVideoUnavailableError() -> AppError {
+        return AppError.invalidInput("This video is private or unavailable.")
+    }
+    
+    nonisolated static func createVideoAgeRestrictedError() -> AppError {
+        return AppError.invalidInput("This video is age-restricted and cannot be processed.")
+    }
+    
+    nonisolated static func createVideoGeoBlockedError() -> AppError {
+        return AppError.invalidInput("This video is not available in your region.")
+    }
+    
+    nonisolated static func createVideoCopyrightError() -> AppError {
+        return AppError.invalidInput("This video has copyright restrictions.")
+    }
+    
+    nonisolated static func createVideoInfoParsingError() -> AppError {
+        return AppError.unknown("Failed to parse video information. Please try again.")
+    }
+    
+    nonisolated static func createVideoInfoLoadError() -> AppError {
+        return AppError.downloadFailed("Failed to load video information. Please check the URL and try again.")
+    }
+    
     nonisolated static func validateTimeInputs(startTime: String, endTime: String) throws {
         // Validate format
         let timePattern = #"^\d{2}:\d{2}:\d{2}$"#

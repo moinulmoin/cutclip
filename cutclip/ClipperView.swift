@@ -24,10 +24,23 @@ struct ClipperView: View {
     @State private var completedVideoPath: String?
     @State private var showingLicenseView = false
 
+    // Video info loading
+    @State private var videoInfoService: VideoInfoService?
+    @State private var isLoadingVideoInfo = false
+    @State private var loadedVideoInfo: VideoInfo?
+    @State private var videoInfoLoadingTask: Task<Void, Never>?
+
     // Task management
     @State private var processingTask: Task<Void, Never>?
 
     let qualityOptions = ["360p", "480p", "720p", "1080p", "Best"]
+    
+    private var availableQualityOptions: [String] {
+        if let videoInfo = loadedVideoInfo {
+            return videoInfo.qualityOptions
+        }
+        return qualityOptions
+    }
 
     @ViewBuilder
     private var usageStatusIndicator: some View {
@@ -119,9 +132,37 @@ struct ClipperView: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
 
-                    TextField("https://youtube.com/watch?v=...", text: $urlText)
-                        .textFieldStyle(MinimalTextFieldStyle())
-                        .disabled(isProcessing)
+                    HStack(spacing: 12) {
+                        TextField("https://youtube.com/watch?v=...", text: $urlText)
+                            .textFieldStyle(MinimalTextFieldStyle())
+                            .disabled(isProcessing || isLoadingVideoInfo)
+                            .onChange(of: urlText) { _, _ in
+                                clearVideoInfo()
+                            }
+
+                        Button(action: loadVideoInfo) {
+                            HStack(spacing: 6) {
+                                if isLoadingVideoInfo {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                        .tint(.primary)
+                                } else {
+                                    Image(systemName: "info.circle")
+                                        .font(.system(size: 14))
+                                }
+                                Text("Load")
+                                    .font(.caption.weight(.medium))
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(urlText.isEmpty || isProcessing || isLoadingVideoInfo)
+                    }
+                }
+
+                // Video Info Preview (only show when loaded)
+                if let videoInfo = loadedVideoInfo {
+                    videoInfoPreview(videoInfo)
                 }
 
                 // Time Settings
@@ -150,7 +191,7 @@ struct ClipperView: View {
                             .foregroundStyle(.secondary)
 
                         Picker("Quality", selection: $selectedQuality) {
-                            ForEach(qualityOptions, id: \.self) { quality in
+                            ForEach(availableQualityOptions, id: \.self) { quality in
                                 Text(quality).tag(quality)
                             }
                         }
@@ -239,9 +280,16 @@ struct ClipperView: View {
                 .environmentObject(usageTracker)
                 .environmentObject(errorHandler)
         }
+        .onAppear {
+            // Initialize video info service
+            if videoInfoService == nil {
+                videoInfoService = VideoInfoService(binaryManager: binaryManager)
+            }
+        }
         .onDisappear {
             // Clean up tasks when view disappears
             processingTask?.cancel()
+            videoInfoLoadingTask?.cancel()
         }
     }
 
@@ -300,7 +348,8 @@ struct ClipperView: View {
                 url: urlText,
                 startTime: startTime,
                 endTime: endTime,
-                aspectRatio: aspectRatio
+                aspectRatio: aspectRatio,
+                videoInfo: loadedVideoInfo
             )
 
             // Initialize services
@@ -367,6 +416,164 @@ struct ClipperView: View {
         startTime = "00:00:00"
         endTime = "00:00:10"
         selectedQuality = "720p"
+        clearVideoInfo()
+    }
+
+    // MARK: - Video Info Loading
+
+    private func loadVideoInfo() {
+        guard !urlText.isEmpty else { return }
+        guard let service = videoInfoService else { return }
+
+        // Cancel any existing loading task
+        videoInfoLoadingTask?.cancel()
+
+        videoInfoLoadingTask = Task {
+            await performVideoInfoLoad(service: service)
+            await MainActor.run {
+                self.videoInfoLoadingTask = nil
+            }
+        }
+    }
+
+    @MainActor
+    private func performVideoInfoLoad(service: VideoInfoService) async {
+        isLoadingVideoInfo = true
+        defer {
+            isLoadingVideoInfo = false
+        }
+
+        do {
+            let videoInfo = try await service.loadVideoInfo(for: urlText)
+            
+            // Validate the loaded video info
+            guard ValidationUtils.isValidVideoInfo(videoInfo) else {
+                throw VideoInfoError.parsingFailed("Invalid video information received")
+            }
+
+            loadedVideoInfo = videoInfo
+
+            // Update quality selection if current selection is not available
+            if !videoInfo.qualityOptions.contains(selectedQuality) {
+                selectedQuality = videoInfo.qualityOptions.first ?? "Best"
+            }
+
+        } catch let error as VideoInfoError {
+            await MainActor.run {
+                errorHandler.handle(error.toAppError())
+            }
+        } catch {
+            await MainActor.run {
+                errorHandler.handle(AppError.unknown("Failed to load video information: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    private func clearVideoInfo() {
+        loadedVideoInfo = nil
+        // Reset quality selection to default when clearing
+        if !qualityOptions.contains(selectedQuality) {
+            selectedQuality = "720p"
+        }
+    }
+
+    @ViewBuilder
+    private func videoInfoPreview(_ videoInfo: VideoInfo) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                // Thumbnail
+                AsyncImage(url: URL(string: videoInfo.thumbnailURL ?? "")) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Rectangle()
+                        .fill(Color(NSColor.systemGray))
+                        .overlay(
+                            Image(systemName: "play.rectangle")
+                                .foregroundColor(.secondary)
+                                .font(.title2)
+                        )
+                }
+                .frame(width: 80, height: 45)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                // Video details
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(videoInfo.title)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(2)
+                        .foregroundStyle(.primary)
+
+                    HStack(spacing: 12) {
+                        // Duration
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(videoInfo.durationFormatted)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        // Channel
+                        if let channelName = videoInfo.channelName {
+                            HStack(spacing: 4) {
+                                Image(systemName: "person.circle")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(channelName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+
+                    // Quality and captions info
+                    HStack(spacing: 12) {
+                        // Available qualities
+                        HStack(spacing: 4) {
+                            Image(systemName: "tv")
+                                .font(.caption)
+                                .foregroundStyle(.blue)
+                            Text("\(videoInfo.availableFormats.count) qualities")
+                                .font(.caption)
+                                .foregroundStyle(.blue)
+                        }
+
+                        // Captions
+                        if videoInfo.hasCaptions {
+                            HStack(spacing: 4) {
+                                Image(systemName: "captions.bubble")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
+                                Text("Captions")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
+                            }
+                        }
+                    }
+                }
+
+                Spacer()
+            }
+
+            // Description (if available)
+            if let description = videoInfo.truncatedDescription {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(12)
+        .background(Color(.controlBackgroundColor))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(.separatorColor), lineWidth: 0.5)
+        )
+        .cornerRadius(8)
     }
 }
 

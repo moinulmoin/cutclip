@@ -18,8 +18,9 @@ struct ClipJob: Sendable {
     let downloadedFilePath: String?
     let outputFilePath: String?
     let errorMessage: String?
+    let videoInfo: VideoInfo?
     
-    init(url: String, startTime: String, endTime: String, aspectRatio: AspectRatio, status: ClipStatus = .pending, progress: Double = 0.0, downloadedFilePath: String? = nil, outputFilePath: String? = nil, errorMessage: String? = nil) {
+    init(url: String, startTime: String, endTime: String, aspectRatio: AspectRatio, status: ClipStatus = .pending, progress: Double = 0.0, downloadedFilePath: String? = nil, outputFilePath: String? = nil, errorMessage: String? = nil, videoInfo: VideoInfo? = nil) {
         self.url = url
         self.startTime = startTime
         self.endTime = endTime
@@ -29,6 +30,7 @@ struct ClipJob: Sendable {
         self.downloadedFilePath = downloadedFilePath
         self.outputFilePath = outputFilePath
         self.errorMessage = errorMessage
+        self.videoInfo = videoInfo
     }
     
     enum ClipStatus: Sendable {

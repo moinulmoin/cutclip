@@ -133,3 +133,4 @@ build-release.sh
 *.dmg
 
 DISTRIBUTION_GUIDE.md
+CLAUDE.local.md

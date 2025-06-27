@@ -128,6 +128,118 @@ struct ValidationUtils {
         return FileManager.default.isWritableFile(atPath: parentDirectory.path)
     }
 
+    // MARK: - Video Info Validation
+
+    /// Validates video info data completeness
+    static func isValidVideoInfo(_ videoInfo: VideoInfo) -> Bool {
+        // Basic validation - ensure essential fields are present
+        guard !videoInfo.id.isEmpty,
+              !videoInfo.title.isEmpty,
+              videoInfo.duration > 0 else {
+            return false
+        }
+
+        // Validate available formats
+        guard !videoInfo.availableFormats.isEmpty else {
+            return false
+        }
+
+        return true
+    }
+
+    /// Validates video format data
+    static func isValidVideoFormat(_ format: VideoFormat) -> Bool {
+        // Ensure format has valid identifier and extension
+        guard !format.formatID.isEmpty,
+              !format.ext.isEmpty else {
+            return false
+        }
+
+        // If it's a video format, it should have height
+        if format.isVideoFormat && format.height == nil {
+            return false
+        }
+
+        return true
+    }
+
+    /// Validates that a quality string matches available formats
+    static func isValidQualityForVideoInfo(_ quality: String, videoInfo: VideoInfo) -> Bool {
+        if quality == "Best" {
+            return true
+        }
+
+        return videoInfo.qualityOptions.contains(quality)
+    }
+
+    /// Extracts numeric quality from quality string (e.g., "720p" -> 720)
+    static func extractQualityHeight(_ quality: String) -> Int? {
+        guard quality != "Best" else { return nil }
+        
+        // Remove 'p' suffix and convert to integer
+        let numericString = quality.replacingOccurrences(of: "p", with: "")
+        return Int(numericString)
+    }
+
+    /// Finds the best format for a given quality preference
+    static func findBestFormat(for quality: String, in videoInfo: VideoInfo) -> VideoFormat? {
+        let formats = videoInfo.availableFormats.filter { $0.isVideoFormat }
+        
+        if quality == "Best" {
+            // Return highest quality format
+            return formats.max { ($0.height ?? 0) < ($1.height ?? 0) }
+        }
+        
+        guard let targetHeight = extractQualityHeight(quality) else {
+            return nil
+        }
+        
+        // Find exact match first
+        if let exactMatch = formats.first(where: { $0.height == targetHeight }) {
+            return exactMatch
+        }
+        
+        // If no exact match, find closest lower quality
+        let lowerQualities = formats.filter { ($0.height ?? 0) <= targetHeight }
+        return lowerQualities.max { ($0.height ?? 0) < ($1.height ?? 0) }
+    }
+
+    /// Validates caption track data
+    static func isValidCaptionTrack(_ caption: CaptionTrack) -> Bool {
+        return !caption.language.isEmpty && !caption.languageCode.isEmpty
+    }
+
+    /// Checks if video has captions in a specific language
+    static func hasCaption(for languageCode: String, in videoInfo: VideoInfo) -> Bool {
+        return videoInfo.availableCaptions.contains { $0.languageCode == languageCode }
+    }
+
+    /// Validates duration is within reasonable bounds
+    static func isValidVideoDuration(_ duration: TimeInterval) -> Bool {
+        // Duration should be positive and not exceed reasonable limits (12 hours)
+        return duration > 0 && duration <= 43200
+    }
+
+    /// Checks if clip time range is valid for video duration
+    static func isValidClipRange(start: String, end: String, videoDuration: TimeInterval) -> Bool {
+        guard let startSeconds = timeStringToSeconds(start),
+              let endSeconds = timeStringToSeconds(end) else {
+            return false
+        }
+
+        // Check basic time range validity
+        guard startSeconds < endSeconds else {
+            return false
+        }
+
+        // Check that end time doesn't exceed video duration
+        guard Double(endSeconds) <= videoDuration else {
+            return false
+        }
+
+        return true
+    }
+
     // MARK: - Error Messages
 
     enum ValidationError: LocalizedError {
@@ -137,6 +249,11 @@ struct ValidationUtils {
         case invalidLicenseKey
         case invalidQuality
         case invalidOutputPath
+        case invalidVideoInfo
+        case invalidVideoFormat
+        case invalidVideoDuration
+        case invalidClipRange
+        case qualityNotAvailable
 
         var errorDescription: String? {
             switch self {
@@ -152,6 +269,16 @@ struct ValidationUtils {
                 return "Selected quality is not supported"
             case .invalidOutputPath:
                 return "Output path is not writable"
+            case .invalidVideoInfo:
+                return "Video information is incomplete or invalid"
+            case .invalidVideoFormat:
+                return "Video format is not supported"
+            case .invalidVideoDuration:
+                return "Video duration is invalid"
+            case .invalidClipRange:
+                return "Clip time range exceeds video duration"
+            case .qualityNotAvailable:
+                return "Selected quality is not available for this video"
             }
         }
     }

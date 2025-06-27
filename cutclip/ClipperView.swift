@@ -12,6 +12,7 @@ struct ClipperView: View {
     @State private var startTime = "00:00:00"
     @State private var endTime = "00:00:10"
     @State private var selectedQuality = "720p"
+    @State private var selectedAspectRatio = ClipJob.AspectRatio.original
 
     @EnvironmentObject private var binaryManager: BinaryManager
     @EnvironmentObject private var errorHandler: ErrorHandler
@@ -37,7 +38,13 @@ struct ClipperView: View {
     
     private var availableQualityOptions: [String] {
         if let videoInfo = loadedVideoInfo {
-            return videoInfo.qualityOptions
+            var options = videoInfo.qualityOptions
+            // Ensure "Best" is always first if it exists
+            if let bestIndex = options.firstIndex(of: "Best") {
+                options.remove(at: bestIndex)
+                options.insert("Best", at: 0)
+            }
+            return options
         }
         return qualityOptions
     }
@@ -166,37 +173,55 @@ struct ClipperView: View {
                 }
 
                 // Time Settings
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Start")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                        TextField("00:00:00", text: $startTime)
-                            .textFieldStyle(MinimalTextFieldStyle())
-                            .disabled(isProcessing)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("End")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                        TextField("00:00:10", text: $endTime)
-                            .textFieldStyle(MinimalTextFieldStyle())
-                            .disabled(isProcessing)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Quality")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-
-                        Picker("Quality", selection: $selectedQuality) {
-                            ForEach(availableQualityOptions, id: \.self) { quality in
-                                Text(quality).tag(quality)
-                            }
+                VStack(spacing: 16) {
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Start")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            TextField("00:00:00", text: $startTime)
+                                .textFieldStyle(MinimalTextFieldStyle())
+                                .disabled(isProcessing || isLoadingVideoInfo)
                         }
-                        .pickerStyle(.menu)
-                        .disabled(isProcessing)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("End")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            TextField("00:00:10", text: $endTime)
+                                .textFieldStyle(MinimalTextFieldStyle())
+                                .disabled(isProcessing || isLoadingVideoInfo)
+                        }
+                    }
+                    
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Quality")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+
+                            Picker("Quality", selection: $selectedQuality) {
+                                ForEach(availableQualityOptions, id: \.self) { quality in
+                                    Text(quality).tag(quality)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .disabled(isProcessing || isLoadingVideoInfo)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Aspect Ratio")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+
+                            Picker("Aspect Ratio", selection: $selectedAspectRatio) {
+                                ForEach(ClipJob.AspectRatio.allCases, id: \.self) { ratio in
+                                    Text(ratio.rawValue).tag(ratio)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .disabled(isProcessing || isLoadingVideoInfo)
+                        }
                     }
                 }
 
@@ -343,12 +368,11 @@ struct ClipperView: View {
             try ErrorHandler.checkDiskSpace()
 
             // Create clip job
-            let aspectRatio = ClipJob.AspectRatio.original // Keep original for now
             let job = ClipJob(
                 url: urlText,
                 startTime: startTime,
                 endTime: endTime,
-                aspectRatio: aspectRatio,
+                aspectRatio: selectedAspectRatio,
                 videoInfo: loadedVideoInfo
             )
 
@@ -416,6 +440,7 @@ struct ClipperView: View {
         startTime = "00:00:00"
         endTime = "00:00:10"
         selectedQuality = "720p"
+        selectedAspectRatio = .original
         clearVideoInfo()
     }
 

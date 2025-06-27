@@ -70,15 +70,35 @@ class ClipService: ObservableObject, Sendable {
             process.executableURL = URL(fileURLWithPath: ffmpegPath)
 
             // Secure argument construction - no shell interpolation
-            process.arguments = [
+            var arguments = [
                 "-i", inputPath,          // Input file (already validated)
                 "-ss", job.startTime,     // Start time (already validated)
-                "-to", job.endTime,       // End time (already validated)
-                "-c", "copy",             // Copy streams without re-encoding
-                "-avoid_negative_ts", "make_zero", // Handle negative timestamps
-                "-y",                     // Overwrite output file
-                outputPath                // Output file (constructed securely)
+                "-to", job.endTime        // End time (already validated)
             ]
+
+            // Apply video filter if aspect ratio requires cropping
+            if let cropFilter = job.aspectRatio.cropFilter {
+                // Apply video filter and re-encode for quality
+                arguments.append(contentsOf: [
+                    "-vf", sanitizeFilterString(cropFilter),
+                    "-c:v", "libx264",        // Video codec for encoding
+                    "-crf", "18",             // High quality (lower = better)
+                    "-preset", "veryfast",    // Fast encoding preset
+                    "-c:a", "copy"            // Copy audio without re-encoding
+                ])
+            } else {
+                // Original behavior - stream copy for speed
+                arguments.append(contentsOf: ["-c", "copy"])
+            }
+
+            // Common arguments
+            arguments.append(contentsOf: [
+                "-avoid_negative_ts", "make_zero", // Handle negative timestamps
+                "-y",                              // Overwrite output file
+                outputPath                         // Output file (constructed securely)
+            ])
+
+            process.arguments = arguments
 
             let pipe = Pipe()
             process.standardError = pipe
@@ -203,7 +223,8 @@ class ClipService: ObservableObject, Sendable {
                 progress: progress,
                 downloadedFilePath: job.downloadedFilePath,
                 outputFilePath: job.outputFilePath,
-                errorMessage: job.errorMessage
+                errorMessage: job.errorMessage,
+                videoInfo: job.videoInfo
             )
             currentJob = updatedJob
         }
@@ -279,7 +300,8 @@ class ClipService: ObservableObject, Sendable {
                 progress: progress,
                 downloadedFilePath: job.downloadedFilePath,
                 outputFilePath: job.outputFilePath,
-                errorMessage: job.errorMessage
+                errorMessage: job.errorMessage,
+                videoInfo: job.videoInfo
             )
             currentJob = updatedJob
         }
@@ -336,8 +358,13 @@ class ClipService: ObservableObject, Sendable {
     }
 
     private nonisolated func sanitizeFilterString(_ filterString: String) -> String {
-        // Allow only safe characters for video filters
-        let allowedCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:=,.-_")
+        // Allow the full set of characters that can legitimately appear in an
+        // FFmpeg filter expression. These are NOT executed by a shell – they are
+        // passed straight to the FFmpeg binary – so they do not create a code-
+        // injection surface, but removing them breaks the syntax.
+        let allowedCharacters = CharacterSet(
+            charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:=,.-_*()/\\"
+        )
         return String(filterString.unicodeScalars.filter { allowedCharacters.contains($0) })
     }
 }

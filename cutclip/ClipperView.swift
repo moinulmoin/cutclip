@@ -34,18 +34,12 @@ struct ClipperView: View {
     // Task management
     @State private var processingTask: Task<Void, Never>?
 
-    let qualityOptions = ["360p", "480p", "720p", "1080p", "Best"]
-    
+    // Replace dynamic quality options with fixed list
+    let qualityOptions = ["720p", "1080p", "1440p", "2160p"]
+    let aspectRatioOptions: [ClipJob.AspectRatio] = [.original, .nineSixteen, .oneOne, .fourThree]
+
     private var availableQualityOptions: [String] {
-        if let videoInfo = loadedVideoInfo {
-            var options = videoInfo.qualityOptions
-            // Ensure "Best" is always first if it exists
-            if let bestIndex = options.firstIndex(of: "Best") {
-                options.remove(at: bestIndex)
-                options.insert("Best", at: 0)
-            }
-            return options
-        }
+        // Always return fixed list
         return qualityOptions
     }
 
@@ -193,7 +187,7 @@ struct ClipperView: View {
                                 .disabled(isProcessing || isLoadingVideoInfo)
                         }
                     }
-                    
+
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Quality")
@@ -201,21 +195,21 @@ struct ClipperView: View {
                                 .foregroundStyle(.secondary)
 
                             Picker("Quality", selection: $selectedQuality) {
-                                ForEach(availableQualityOptions, id: \.self) { quality in
+                                ForEach(qualityOptions, id: \..self) { quality in
                                     Text(quality).tag(quality)
                                 }
                             }
                             .pickerStyle(.menu)
                             .disabled(isProcessing || isLoadingVideoInfo)
                         }
-                        
+
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Aspect Ratio")
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
 
                             Picker("Aspect Ratio", selection: $selectedAspectRatio) {
-                                ForEach(ClipJob.AspectRatio.allCases, id: \.self) { ratio in
+                                ForEach(aspectRatioOptions, id: \..self) { ratio in
                                     Text(ratio.rawValue).tag(ratio)
                                 }
                             }
@@ -373,6 +367,7 @@ struct ClipperView: View {
                 startTime: startTime,
                 endTime: endTime,
                 aspectRatio: selectedAspectRatio,
+                quality: selectedQuality,
                 videoInfo: loadedVideoInfo
             )
 
@@ -470,7 +465,7 @@ struct ClipperView: View {
 
         do {
             let videoInfo = try await service.loadVideoInfo(for: urlText)
-            
+
             // Validate the loaded video info
             guard ValidationUtils.isValidVideoInfo(videoInfo) else {
                 throw VideoInfoError.parsingFailed("Invalid video information received")

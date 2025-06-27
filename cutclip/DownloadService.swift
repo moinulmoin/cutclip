@@ -72,9 +72,20 @@ class DownloadService: ObservableObject, Sendable {
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: ytDlpPath)
+
+            // Build yt-dlp format expression from desired quality
+            let formatString: String
+            if job.quality.lowercased() == "best" {
+                formatString = "bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best"
+            } else if let h = Int(job.quality.lowercased().replacingOccurrences(of: "p", with: "")) {
+                formatString = "best[height<=\(h)][ext=mp4]/best[height<=\(h)]"
+            } else {
+                formatString = "best[height<=720][ext=mp4]/best[height<=720]"
+            }
+
             process.arguments = [
-                "--format", "best[height<=720][ext=mp4]/best[height<=720]", // Prioritize mp4
-                "--output", outputPath.path, // Use the deterministic path
+                "--format", formatString,
+                "--output", outputPath.path,
                 "--no-playlist",
                 job.url
             ]

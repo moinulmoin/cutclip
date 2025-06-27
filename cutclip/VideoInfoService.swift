@@ -12,11 +12,11 @@ class VideoInfoService: ObservableObject, Sendable {
     private let binaryManager: BinaryManager
     @Published var isLoading: Bool = false
     @Published var currentVideoInfo: VideoInfo?
-    
+
     nonisolated init(binaryManager: BinaryManager) {
         self.binaryManager = binaryManager
     }
-    
+
     nonisolated func isValidYouTubeURL(_ urlString: String) -> Bool {
         // Reuse validation logic from DownloadService
         guard !urlString.isEmpty,
@@ -45,7 +45,7 @@ class VideoInfoService: ObservableObject, Sendable {
 
         return true
     }
-    
+
     func loadVideoInfo(for urlString: String) async throws -> VideoInfo {
         let ytDlpPath = await MainActor.run { binaryManager.ytDlpPath }
         guard let ytDlpPath = ytDlpPath else {
@@ -101,8 +101,14 @@ class VideoInfoService: ObservableObject, Sendable {
 
             process.terminationHandler = { process in
                 Task {
+                    // --- flush anything still waiting in the pipe -----------------
+                    pipe.fileHandleForReading.readabilityHandler = nil
+                    if let tailData = try? pipe.fileHandleForReading.readToEnd() {
+                        await outputBuffer.appendData(tailData)
+                    }
+                    // ----------------------------------------------------------------
+
                     let didResume = await stateManager.markResumedAndCleanup {
-                        pipe.fileHandleForReading.readabilityHandler = nil
                         if process.isRunning {
                             process.terminate()
                         }
@@ -110,7 +116,7 @@ class VideoInfoService: ObservableObject, Sendable {
 
                     if !didResume {
                         if process.terminationStatus == 0 {
-                            // Success - parse the JSON output
+                            // Success - parse the (now complete) JSON output
                             let outputData = await outputBuffer.outputData
                             do {
                                 let videoInfo = try await self.parseVideoInfo(from: outputData)
@@ -125,7 +131,6 @@ class VideoInfoService: ObservableObject, Sendable {
                             // Error - process failed
                             let outputData = await outputBuffer.outputData
                             let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error"
-                            
                             // Parse common yt-dlp errors
                             let error = self.parseYtDlpError(from: errorOutput)
                             continuation.resume(throwing: error)
@@ -155,10 +160,10 @@ class VideoInfoService: ObservableObject, Sendable {
             }
         }
     }
-    
+
     private nonisolated func parseVideoInfo(from data: Data) async throws -> VideoInfo {
         let decoder = JSONDecoder()
-        
+
         do {
             let ytDlpInfo = try decoder.decode(YtDlpVideoInfo.self, from: data)
             return ytDlpInfo.toVideoInfo()
@@ -180,14 +185,14 @@ class VideoInfoService: ObservableObject, Sendable {
                     }
                 }
             }
-            
+
             throw VideoInfoError.parsingFailed("Failed to parse video information: \(error.localizedDescription)")
         }
     }
-    
+
     private nonisolated func parseYtDlpError(from output: String) -> VideoInfoError {
         let lowercaseOutput = output.lowercased()
-        
+
         if lowercaseOutput.contains("private video") || lowercaseOutput.contains("video unavailable") {
             return .videoUnavailable("This video is private or unavailable")
         } else if lowercaseOutput.contains("video not found") || lowercaseOutput.contains("http error 404") {
@@ -204,7 +209,7 @@ class VideoInfoService: ObservableObject, Sendable {
             return .loadFailed("Failed to load video information: \(output)")
         }
     }
-    
+
     func clearVideoInfo() {
         currentVideoInfo = nil
     }
@@ -282,8 +287,8 @@ enum VideoInfoError: LocalizedError, Sendable {
             return .binaryNotFound("Setup required. Please configure required tools in Settings.")
         case .invalidURL:
             return .invalidInput("Invalid YouTube URL. Please check the link and try again.")
-        case .videoNotFound(let message), .videoUnavailable(let message), 
-             .ageRestricted(let message), .geoBlocked(let message), 
+        case .videoNotFound(let message), .videoUnavailable(let message),
+             .ageRestricted(let message), .geoBlocked(let message),
              .copyrightRestricted(let message):
             return .invalidInput(message)
         case .networkError(_):

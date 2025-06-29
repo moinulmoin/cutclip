@@ -33,6 +33,10 @@ struct CleanClipperView: View {
 
     // Task management
     @State private var processingTask: Task<Void, Never>?
+    
+    // UX state management
+    @State private var showCompletionView = false
+    @State private var savedVideoURL = ""
 
     // Quality and aspect ratio options
     let qualityOptions = ["720p", "1080p", "1440p", "2160p"]
@@ -49,8 +53,8 @@ struct CleanClipperView: View {
                     // URL Input Section
                     urlInputSection
                     
-                    // Video Preview (if loaded)
-                    if let videoInfo = loadedVideoInfo {
+                    // Video Preview (if loaded and not showing completion)
+                    if let videoInfo = loadedVideoInfo, !showCompletionView {
                         CleanVideoPreview(videoInfo: videoInfo)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .move(edge: .top)),
@@ -61,8 +65,8 @@ struct CleanClipperView: View {
                     // Clip Settings Section
                     clipSettingsSection
                     
-                    // Progress Section (if processing)
-                    if isProcessing {
+                    // Progress Section (if processing and not showing completion)
+                    if isProcessing && !showCompletionView {
                         CleanProgressSection(
                             title: "Processing Video",
                             message: processingMessage,
@@ -148,83 +152,197 @@ struct CleanClipperView: View {
     // MARK: - URL Input Section
     @ViewBuilder
     private var urlInputSection: some View {
-        CleanInputWithAction(
-            label: "YouTube Video URL",
-            text: $urlText,
-            placeholder: "https://youtube.com/watch?v=...",
-            isDisabled: isProcessing || isLoadingVideoInfo,
-            onTextChange: { clearVideoInfo() }
-        ) {
-            Button(action: loadVideoInfo) {
-                HStack(spacing: CleanDS.Spacing.xs) {
-                    if isLoadingVideoInfo {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(CleanDS.Colors.accent)
-                    } else {
-                        Image(systemName: "arrow.down.circle")
-                            .foregroundColor(CleanDS.Colors.accent)
+        if loadedVideoInfo == nil {
+            // Full URL input when no video is loaded
+            CleanInputWithAction(
+                label: "YouTube Video URL",
+                text: $urlText,
+                placeholder: "https://youtube.com/watch?v=...",
+                isDisabled: isProcessing || isLoadingVideoInfo,
+                onTextChange: { clearVideoInfo() }
+            ) {
+                Button(action: loadVideoInfo) {
+                    HStack(spacing: CleanDS.Spacing.xs) {
+                        if isLoadingVideoInfo {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(CleanDS.Colors.accent)
+                        } else {
+                            Image(systemName: "arrow.down.circle")
+                                .foregroundColor(CleanDS.Colors.accent)
+                        }
+                        Text("Load Info")
                     }
-                    Text("Load Info")
                 }
+                .cleanPrimaryButton()
+                .disabled(urlText.isEmpty || isProcessing || isLoadingVideoInfo)
             }
-            .cleanPrimaryButton()
-            .disabled(urlText.isEmpty || isProcessing || isLoadingVideoInfo)
+        } else {
+            // Compact URL display when video is loaded
+            VStack(alignment: .leading, spacing: CleanDS.Spacing.xs) {
+                CleanLabel(text: "YouTube Video URL")
+                
+                HStack(spacing: CleanDS.Spacing.md) {
+                    HStack(spacing: CleanDS.Spacing.sm) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(CleanDS.Colors.success)
+                            .font(CleanDS.Typography.body)
+                        
+                        Text(urlText)
+                            .font(CleanDS.Typography.body)
+                            .foregroundColor(CleanDS.Colors.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    CleanActionButton("Change", style: .secondary) {
+                        clearVideoInfo()
+                        urlText = ""
+                    }
+                    .disabled(isProcessing)
+                }
+                .padding(CleanDS.Spacing.md)
+                .background(CleanDS.Colors.backgroundSecondary)
+                .cornerRadius(CleanDS.Radius.medium)
+                .overlay(
+                    RoundedRectangle(cornerRadius: CleanDS.Radius.medium)
+                        .stroke(CleanDS.Colors.borderLight, lineWidth: 1)
+                )
+            }
         }
     }
     
     // MARK: - Clip Settings Section
     @ViewBuilder
     private var clipSettingsSection: some View {
-        VStack(spacing: CleanDS.Spacing.md) {
-            CleanSectionHeader(title: "Clip Settings")
-            
-            // Time inputs
-            HStack(spacing: CleanDS.Spacing.md) {
-                CleanInputField(
-                    label: "Start Time",
-                    text: $startTime,
-                    placeholder: "00:00:00",
-                    isDisabled: isProcessing || isLoadingVideoInfo
-                )
+        if loadedVideoInfo != nil && !showCompletionView {
+            VStack(spacing: CleanDS.Spacing.md) {
+                CleanSectionHeader(title: "Clip Settings")
                 
-                CleanInputField(
-                    label: "End Time",
-                    text: $endTime,
-                    placeholder: "00:00:10",
-                    isDisabled: isProcessing || isLoadingVideoInfo
-                )
-            }
-            
-            // Quality and aspect ratio
-            HStack(spacing: CleanDS.Spacing.md) {
-                CleanPickerField(
-                    label: "Quality",
-                    selection: $selectedQuality,
-                    options: qualityOptions,
-                    isDisabled: isProcessing || isLoadingVideoInfo
-                )
+                // Time inputs
+                HStack(spacing: CleanDS.Spacing.md) {
+                    CleanInputField(
+                        label: "Start Time",
+                        text: $startTime,
+                        placeholder: "00:00:00",
+                        isDisabled: isProcessing || isLoadingVideoInfo
+                    )
+                    
+                    CleanInputField(
+                        label: "End Time",
+                        text: $endTime,
+                        placeholder: "00:00:10",
+                        isDisabled: isProcessing || isLoadingVideoInfo
+                    )
+                }
                 
-                CleanPickerField(
-                    label: "Aspect Ratio",
-                    selection: $selectedAspectRatio,
-                    options: aspectRatioOptions,
-                    isDisabled: isProcessing || isLoadingVideoInfo
-                )
+                // Quality and aspect ratio
+                HStack(spacing: CleanDS.Spacing.md) {
+                    CleanPickerField(
+                        label: "Quality",
+                        selection: $selectedQuality,
+                        options: qualityOptions,
+                        isDisabled: isProcessing || isLoadingVideoInfo
+                    )
+                    
+                    CleanPickerField(
+                        label: "Aspect Ratio",
+                        selection: $selectedAspectRatio,
+                        options: aspectRatioOptions,
+                        isDisabled: isProcessing || isLoadingVideoInfo
+                    )
+                }
             }
+            .cleanSection()
+        } else if loadedVideoInfo == nil {
+            // Placeholder when no video is loaded
+            Text("Load a video to start clipping")
+                .font(CleanDS.Typography.body)
+                .foregroundColor(CleanDS.Colors.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(CleanDS.Spacing.lg)
+                .cleanSection()
         }
-        .cleanSection()
     }
     
     // MARK: - Action Section
     @ViewBuilder
     private var actionSection: some View {
-        if let videoPath = completedVideoPath {
-            CleanSuccessSection(
-                onOpenVideo: { openVideo(at: videoPath) },
-                onShowInFinder: { showInFinder(path: videoPath) },
-                onNewClip: resetState
-            )
+        if showCompletionView, let videoPath = completedVideoPath {
+            // Enhanced completion view
+            VStack(spacing: CleanDS.Spacing.lg) {
+                // Success indicator
+                VStack(spacing: CleanDS.Spacing.sm) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 48))
+                        .foregroundColor(CleanDS.Colors.success)
+                    
+                    Text("Clip Complete!")
+                        .font(CleanDS.Typography.title)
+                        .foregroundColor(CleanDS.Colors.textPrimary)
+                }
+                
+                // Video info with clipped time
+                if let videoInfo = loadedVideoInfo {
+                    HStack(spacing: CleanDS.Spacing.md) {
+                        // Thumbnail
+                        AsyncImage(url: URL(string: videoInfo.thumbnailURL ?? "")) { image in
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        } placeholder: {
+                            Rectangle()
+                                .fill(CleanDS.Colors.backgroundTertiary)
+                        }
+                        .frame(width: 60, height: 34)
+                        .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.small))
+                        
+                        VStack(alignment: .leading, spacing: CleanDS.Spacing.xs) {
+                            Text(videoInfo.title)
+                                .font(CleanDS.Typography.caption)
+                                .foregroundColor(CleanDS.Colors.textPrimary)
+                                .lineLimit(1)
+                            Text("Clipped: \(startTime) - \(endTime)")
+                                .font(CleanDS.Typography.caption)
+                                .foregroundColor(CleanDS.Colors.textSecondary)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(CleanDS.Spacing.sm)
+                    .background(CleanDS.Colors.backgroundSecondary)
+                    .cornerRadius(CleanDS.Radius.small)
+                }
+                
+                // Action buttons
+                VStack(spacing: CleanDS.Spacing.sm) {
+                    HStack(spacing: CleanDS.Spacing.sm) {
+                        CleanActionButton("Open Video", style: .primary) {
+                            openVideo(at: videoPath)
+                        }
+                        
+                        CleanActionButton("Show in Finder", style: .secondary) {
+                            showInFinder(path: videoPath)
+                        }
+                    }
+                    
+                    Divider()
+                        .padding(.vertical, CleanDS.Spacing.xs)
+                    
+                    // Continue options
+                    HStack(spacing: CleanDS.Spacing.md) {
+                        CleanActionButton("Continue with Same Video", style: .secondary) {
+                            continueWithSameVideo()
+                        }
+                        
+                        CleanActionButton("New Video", style: .ghost) {
+                            resetState()
+                        }
+                    }
+                }
+            }
+            .cleanSection()
             .transition(.asymmetric(
                 insertion: .opacity.combined(with: .scale(scale: 0.98)),
                 removal: .opacity
@@ -234,7 +352,7 @@ struct CleanClipperView: View {
                 "Create Clip",
                 icon: "scissors",
                 style: .primary,
-                isDisabled: urlText.isEmpty,
+                isDisabled: urlText.isEmpty || loadedVideoInfo == nil,
                 action: processVideo
             )
             .transition(.opacity)
@@ -322,6 +440,7 @@ extension CleanClipperView {
         processingProgress = 0.0
         processingMessage = "Starting..."
         completedVideoPath = nil
+        showCompletionView = false
 
         defer {
             // Always hide processing state when done
@@ -410,6 +529,8 @@ extension CleanClipperView {
                 self.completedVideoPath = outputPath
                 self.processingProgress = 1.0
                 self.processingMessage = "Complete!"
+                self.showCompletionView = true
+                self.savedVideoURL = urlText
             }
 
         } catch let error as DownloadError {
@@ -457,10 +578,24 @@ extension CleanClipperView {
         processingMessage = "Starting..."
         completedVideoPath = nil
         loadedVideoInfo = nil
+        showCompletionView = false
+        savedVideoURL = ""
         
         // Cancel any running tasks
         videoInfoLoadingTask?.cancel()
         processingTask?.cancel()
+    }
+    
+    private func continueWithSameVideo() {
+        // Keep the same video loaded but reset clip settings
+        completedVideoPath = nil
+        processingProgress = 0.0
+        processingMessage = "Starting..."
+        startTime = "00:00:00"
+        endTime = "00:00:10"
+        showCompletionView = false
+        // Keep the loaded video info and URL
+        urlText = savedVideoURL
     }
 }
 

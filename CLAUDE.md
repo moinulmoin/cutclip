@@ -54,7 +54,7 @@ The app follows a strict onboarding sequence managed by `ContentView`:
 1. **Disclaimer** (`DisclaimerView`) - Legal notice, saves to `@AppStorage("disclaimerAccepted")`
 2. **Auto Setup** (`AutoSetupView`) - Downloads yt-dlp and FFmpeg binaries via `AutoSetupService`
 3. **License Setup** (`LicenseStatusView`) - Handles free credits vs license activation
-4. **Main App** (`ClipperView`) - Video clipping interface
+4. **Main App** (`CleanClipperView`) - Video clipping interface with modern UI
 
 ### Core Services Architecture
 
@@ -68,6 +68,8 @@ The app follows a strict onboarding sequence managed by `ContentView`:
 
 **ClipService**: Orchestrates video clipping by coordinating `BinaryManager` (binaries), `DownloadService` (yt-dlp), and FFmpeg processing.
 
+**VideoInfoService**: Fetches video metadata (title, duration, thumbnail, available qualities) from YouTube URLs using yt-dlp before download. Enables quality selection and video preview.
+
 ### Environment Configuration
 ```bash
 # API endpoint (defaults to production URL)
@@ -75,28 +77,27 @@ export CUTCLIP_API_BASE_URL="https://cutclip.moinulmoin.com/api"
 ```
 
 ### Design System
+The app uses **CleanDS (CleanDesignSystem)** as the primary design system with:
 - **Window Size**: 500×450px (main windows), 420×450px (modals)
 - **Padding**: 40px standard, 24px for modals
 - **Corner Radius**: 8px for UI elements, 16px for window backgrounds
-- **Colors**: Black theme throughout
+- **Colors**: Black theme throughout with modern UI components
 - **Materials**: `.regularMaterial` for window backgrounds
+- **Components**: Custom button styles (CleanPrimaryButton, CleanSecondaryButton, CleanLinkButton)
 
 ### Dependencies
-- **Sparkle**: Auto-update framework (GitHub package) - Currently disabled
-- **create-dmg**: DMG creation tool (Homebrew)
-- **yt-dlp & FFmpeg**: Downloaded automatically by `AutoSetupService`
+- **create-dmg**: DMG creation tool (Homebrew) - For creating distribution DMG files
+- **yt-dlp & FFmpeg**: Downloaded automatically by `AutoSetupService` during app setup
 
 ## Backend Integration
 
 The app integrates with a REST API for license management and usage tracking. Key endpoints:
 
-- `GET /users/check-device`
-- `POST /users/create-device`
-- `PUT /users/update-device`
-- `PUT /users/decrement-free-credits`
-- `POST /validate-license`
-
-See `USER_API_DOCS.md` for complete API documentation and flow diagrams.
+- `GET /users/check-device` - Check device registration and credit status
+- `POST /users/create-device` - Register new device with 3 free credits
+- `PUT /users/update-device` - Update device information
+- `PUT /users/decrement-free-credits` - Decrement credits after successful clip
+- `POST /validate-license` - Validate and activate license key
 
 ## Key Implementation Notes & Patterns
 
@@ -126,12 +127,29 @@ func someApiCall() async throws -> SomeResponse {
 - **License**: API → Keychain storage (`SecureStorage`) → `LicenseManager` state.
 - **Binaries**: Auto-download → `~/Library/Application Support/CutClip/bin/`.
 
+## Features
+
+### Video Processing
+- **Quality Selection**: Supports 720p, 1080p, 1440p, and 2160p video quality options
+- **Aspect Ratios**: Original, 9:16 (vertical), 1:1 (square), and 4:3 cropping options
+- **Video Preview**: Loads video metadata before download showing title, duration, thumbnail
+- **Time-based Clipping**: Precise start/end time selection in HH:MM:SS format
+
 ## File Organization
 
-**Views**: `DisclaimerView`, `AutoSetupView`, `LicenseStatusView`, `ClipperView` follow the app flow sequence.
+**Views**: 
+- `DisclaimerView`, `AutoSetupView`, `LicenseStatusView` - Onboarding flow
+- `CleanClipperView` - Main video clipping interface with modern UI
+- `CleanDS` - Design system components (buttons, text fields, styles)
 
 **Services**: Business logic in `*Manager.swift` and `*Service.swift` files using singleton pattern.
 
-**Models**: `ClipJob.swift` for video processing data structures.
+**Models**: 
+- `ClipJob.swift` - Video processing data structures with quality and aspect ratio support
+- `VideoInfo.swift` - Video metadata model
 
-**Utilities**: `DeviceIdentifier`, `SecureStorage`, `NetworkMonitor`, `ErrorHandler` for cross-cutting concerns.
+**Utilities**: 
+- `DeviceIdentifier`, `SecureStorage` - Security and device management
+- `NetworkMonitor`, `ErrorHandler` - Network and error handling
+- `ValidationUtils` - Input validation
+- `NetworkRetryHelper`, `APIConfiguration` - Networking utilities

@@ -74,18 +74,9 @@ class DownloadService: ObservableObject, Sendable {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: ytDlpPath)
 
-            // Build yt-dlp format expression from desired quality
-            // Remove mp4 restriction to allow webm and other formats
-            let formatString: String
-            if job.quality.lowercased() == "best" {
-                formatString = "bestvideo+bestaudio/best"
-            } else if let h = Int(job.quality.lowercased().replacingOccurrences(of: "p", with: "")) {
-                // Always use height as the quality constraint for consistency
-                // The ClipService will handle aspect ratio scaling appropriately
-                formatString = "bestvideo[height<=\(h)]+bestaudio[ext=m4a]/bestvideo[height<=\(h)]+bestaudio/best[height<=\(h)]/best"
-            } else {
-                formatString = "bestvideo[height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
-            }
+            // Always download the best available quality with video+audio
+            // The quality parameter will be used for OUTPUT scaling in ClipService
+            let formatString = "best[ext=mp4]/best[ext=webm]/best"
 
             process.arguments = [
                 "--format", formatString,

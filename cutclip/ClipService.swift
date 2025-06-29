@@ -36,6 +36,8 @@ class ClipService: ObservableObject, Sendable {
               FileManager.default.isReadableFile(atPath: inputPath) else {
             throw ClipError.invalidInput("Input file does not exist or is not readable")
         }
+        
+
 
         // Validate time format and values
         guard ValidationUtils.isValidTimeFormat(job.startTime),
@@ -85,17 +87,24 @@ class ClipService: ObservableObject, Sendable {
                 videoFilters.append(cropFilter)
             }
             
-            // Add scale filter if needed for quality control
+            // Add scale filter for output quality (always scale to target quality)
             if let scaleFilter = job.aspectRatio.scaleFilter(for: job.quality) {
                 videoFilters.append(scaleFilter)
+            } else if job.quality.lowercased() != "best" {
+                // For "Auto" aspect ratio, still scale to target quality if specified
+                if let height = Int(job.quality.lowercased().replacingOccurrences(of: "p", with: "")) {
+                    // Ensure height is even for video encoding compatibility
+                    let evenHeight = height % 2 == 0 ? height : height + 1
+                    videoFilters.append("scale=-2:\(evenHeight)")
+                }
             }
             
             if !videoFilters.isEmpty {
                 // Apply video filters and re-encode for quality
                 let combinedFilter = videoFilters.joined(separator: ",")
                 arguments.append(contentsOf: [
-                    "-map", "0:v:0",          // Map video stream (required when filtering)
-                    "-map", "0:a:0?",         // Map audio stream if present
+                    "-map", "0:v?",           // Map video stream if present
+                    "-map", "0:a?",           // Map audio stream if present
                     "-vf", sanitizeFilterString(combinedFilter),
                     "-c:v", "libx264",        // Video codec for encoding
                     "-crf", "18",             // High quality (lower = better)

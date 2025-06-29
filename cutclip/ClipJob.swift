@@ -56,11 +56,15 @@ struct ClipJob: Sendable {
             case .original:
                 return nil
             case .nineSixteen:
-                return "crop=min(iw,ih*9/16):min(ih,iw*16/9):(iw-min(iw,ih*9/16))/2:(ih-min(ih,iw*16/9))/2"
+                // FFmpeg crop filter for 9:16 aspect ratio (vertical)
+                // Escape commas inside min() functions for FFmpeg filter parsing
+                return "crop=min(iw\\,ih*9/16):min(ih\\,iw*16/9):(iw-min(iw\\,ih*9/16))/2:(ih-min(ih\\,iw*16/9))/2"
             case .oneOne:
-                return "crop=min(iw,ih):min(iw,ih):(iw-min(iw,ih))/2:(ih-min(ih,ih))/2"
+                // FFmpeg crop filter for 1:1 aspect ratio (square)
+                return "crop=min(iw\\,ih):min(iw\\,ih):(iw-min(iw\\,ih))/2:(ih-min(iw\\,ih))/2"
             case .fourThree:
-                return "crop=min(iw,ih*4/3):min(ih,iw*3/4):(iw-min(iw,ih*4/3))/2:(ih-min(ih,iw*3/4))/2"
+                // FFmpeg crop filter for 4:3 aspect ratio (traditional)
+                return "crop=min(iw\\,ih*4/3):min(ih\\,iw*3/4):(iw-min(iw\\,ih*4/3))/2:(ih-min(ih\\,iw*3/4))/2"
             }
         }
         
@@ -74,17 +78,26 @@ struct ClipJob: Sendable {
             case .original:
                 return nil // Can't determine without source
             case .nineSixteen: // 9:16 vertical
-                return Int(Double(height) * 9.0 / 16.0)
+                let width = Int(Double(height) * 9.0 / 16.0)
+                // Ensure width is even for video encoding compatibility
+                return width % 2 == 0 ? width : width + 1
             case .oneOne: // 1:1 square
-                return height
+                // Height might be odd, so ensure it's even
+                return height % 2 == 0 ? height : height + 1
             case .fourThree: // 4:3 traditional
-                return Int(Double(height) * 4.0 / 3.0)
+                let width = Int(Double(height) * 4.0 / 3.0)
+                // Ensure width is even for video encoding compatibility
+                return width % 2 == 0 ? width : width + 1
             }
         }
         
         /// Returns target height for the given quality
         func targetHeight(for quality: String) -> Int? {
-            return Int(quality.lowercased().replacingOccurrences(of: "p", with: ""))
+            guard let height = Int(quality.lowercased().replacingOccurrences(of: "p", with: "")) else {
+                return nil
+            }
+            // Ensure height is even for video encoding compatibility
+            return height % 2 == 0 ? height : height + 1
         }
         
         /// Returns FFmpeg scale filter for the target resolution

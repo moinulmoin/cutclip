@@ -16,15 +16,16 @@ struct AutoSetupView: View {
     @State private var setupTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 40) {
+        ScrollView {
+            VStack(spacing: CleanDS.Spacing.sectionSpacing) {
             // Header Section - only show when not complete
             if !setupService.isSetupComplete {
-                VStack(spacing: 20) {
+                VStack(spacing: CleanDS.Spacing.lg) {
                     // Animated App Icon
                     Image("AppLogo")
                         .resizable()
                         .frame(width: 80, height: 80)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.medium))
                         .scaleEffect(animateIcon ? 1.0 : 0.9)
                         .rotationEffect(.degrees(animateIcon ? 3 : -3))
                         .animation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true), value: animateIcon)
@@ -32,14 +33,14 @@ struct AutoSetupView: View {
                     .scaleEffect(showContent ? 1.0 : 0.5)
                     .animation(.bouncy(duration: 0.8).delay(0.2), value: showContent)
 
-                    VStack(spacing: 8) {
+                    VStack(spacing: CleanDS.Spacing.xs) {
                         Text("Setting up CutClip")
-                            .font(.title.weight(.bold))
-                            .foregroundStyle(.primary)
+                            .font(CleanDS.Typography.headline)
+                            .foregroundColor(CleanDS.Colors.textPrimary)
 
                         Text("Almost ready to clip some bangers!")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .font(CleanDS.Typography.caption)
+                            .foregroundColor(CleanDS.Colors.textSecondary)
                     }
                     .opacity(showContent ? 1.0 : 0.0)
                     .offset(y: showContent ? 0 : 20)
@@ -48,35 +49,37 @@ struct AutoSetupView: View {
             }
 
             // Content Section
-            VStack(spacing: 24) {
+            VStack(spacing: CleanDS.Spacing.betweenComponents) {
                 if setupService.isSetupComplete {
-                    SetupCompleteView {
+                    CleanSetupCompleteView {
                         completeSetup()
                     }
                 } else if !hasStartedSetup {
-                    VStack(spacing: 16) {
+                    VStack(spacing: CleanDS.Spacing.md) {
                         Text("CutClip needs to download video processing tools to work properly.")
                             .multilineTextAlignment(.center)
-                            .foregroundStyle(.secondary)
-                            .font(.callout)
+                            .foregroundColor(CleanDS.Colors.textSecondary)
+                            .font(CleanDS.Typography.body)
 
                         Button("Get Started") {
                             startSetup()
                         }
-                        .buttonStyle(PrimaryButtonStyle())
+                        .cleanPrimaryButton()
                     }
                     .opacity(showContent ? 1.0 : 0.0)
                     .animation(.easeInOut(duration: 0.6).delay(0.6), value: showContent)
                 } else {
-                    SetupProgressView(
+                    CleanSetupProgressView(
                         setupService: setupService,
                         onRetry: startSetup
                     )
                 }
             }
+            }
         }
-        .padding(40)
-        .frame(width: 500, height: 450)
+        .padding(CleanDS.Spacing.containerNormal)
+        .cleanWindow()
+        .cleanContent(maxWidth: 400)
         .onAppear {
             animateIcon = true
             showContent = true
@@ -100,102 +103,115 @@ struct AutoSetupView: View {
 
     private func completeSetup() {
         // Update binary manager with downloaded paths
+        // Since AutoSetupService has already verified these binaries work,
+        // we can set them directly without additional verification
         let paths = setupService.getBinaryPaths()
         if let ytDlpPath = paths.ytDlp {
-            binaryManager.setBinaryPath(for: .ytDlp, path: ytDlpPath)
+            binaryManager.setBinaryPathVerified(for: .ytDlp, path: ytDlpPath)
         }
         if let ffmpegPath = paths.ffmpeg {
-            binaryManager.setBinaryPath(for: .ffmpeg, path: ffmpegPath)
+            binaryManager.setBinaryPathVerified(for: .ffmpeg, path: ffmpegPath)
         }
+        
+        // Mark as configured immediately since binaries are pre-verified
+        binaryManager.markAsConfigured()
     }
 }
 
 // Supporting Views
-struct SetupProgressView: View {
+struct CleanSetupProgressView: View {
     @ObservedObject var setupService: AutoSetupService
     let onRetry: () -> Void
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: CleanDS.Spacing.lg) {
             Text(setupService.setupMessage)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(CleanDS.Typography.body)
+                .foregroundColor(CleanDS.Colors.textSecondary)
                 .multilineTextAlignment(.center)
 
-            VStack(spacing: 12) {
+            VStack(spacing: CleanDS.Spacing.sm) {
                 ProgressView(value: setupService.setupProgress)
-                    .frame(width: 320)
-                    .tint(.black)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 4)
+                    .tint(CleanDS.Colors.accent)
 
                 Text("\(Int(setupService.setupProgress * 100))%")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .font(CleanDS.Typography.captionMedium)
+                    .foregroundColor(CleanDS.Colors.accent)
             }
 
             if let error = setupService.setupError {
-                VStack(spacing: 16) {
-                    HStack(spacing: 8) {
+                VStack(spacing: CleanDS.Spacing.md) {
+                    HStack(spacing: CleanDS.Spacing.xs) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
+                            .foregroundColor(CleanDS.Colors.error)
                         Text("Setup Error")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(.red)
+                            .font(CleanDS.Typography.bodyMedium)
+                            .foregroundColor(CleanDS.Colors.error)
                     }
 
                     Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(CleanDS.Typography.caption)
+                        .foregroundColor(CleanDS.Colors.textSecondary)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal)
 
-                    Button("Try Again") {
+                    CleanActionButton(
+                        "Try Again",
+                        style: .secondary
+                    ) {
                         onRetry()
                     }
-                    .buttonStyle(SecondaryButtonStyle())
                 }
-                .padding()
+                .padding(CleanDS.Spacing.md)
                 .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(.red.opacity(0.05))
-                        .strokeBorder(.red.opacity(0.2), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: CleanDS.Radius.medium)
+                        .fill(CleanDS.Colors.error.opacity(0.05))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: CleanDS.Radius.medium)
+                                .stroke(CleanDS.Colors.error.opacity(0.2), lineWidth: 1)
+                        )
                 )
             }
         }
+        .cleanSection()
     }
 }
 
-struct SetupCompleteView: View {
+struct CleanSetupCompleteView: View {
     let onContinue: () -> Void
     @State private var showSuccess = false
 
     var body: some View {
-        VStack(spacing: 40) {
+        VStack(spacing: CleanDS.Spacing.lg) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(LinearGradient(colors: [.green.opacity(0.8), .green], startPoint: .topLeading, endPoint: .bottomTrailing))
-                .scaleEffect(showSuccess ? 1.0 : 0.5)
-                .animation(.bouncy(duration: 0.8), value: showSuccess)
+                .font(.system(size: 40))
+                .foregroundColor(CleanDS.Colors.success)
+                .scaleEffect(showSuccess ? 1.0 : 0.8)
+                .animation(CleanDS.Animation.smooth.delay(0.1), value: showSuccess)
 
-            VStack(spacing: 8) {
-                Text("All set!")
-                    .font(.largeTitle.weight(.bold))
-                    .foregroundStyle(.primary)
+            VStack(spacing: CleanDS.Spacing.xs) {
+                Text("Setup Complete")
+                    .font(CleanDS.Typography.title)
+                    .foregroundColor(CleanDS.Colors.textPrimary)
 
-                Text("Ready to start clipping!")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
+                Text("Ready to start clipping videos")
+                    .font(CleanDS.Typography.caption)
+                    .foregroundColor(CleanDS.Colors.textSecondary)
             }
             .opacity(showSuccess ? 1.0 : 0.0)
-            .animation(.easeInOut(duration: 0.6).delay(0.3), value: showSuccess)
+            .animation(CleanDS.Animation.standard.delay(0.2), value: showSuccess)
 
-            Button("Continue") {
+            CleanActionButton(
+                "Continue",
+                style: .primary
+            ) {
                 onContinue()
             }
-            .buttonStyle(AccentButtonStyle())
             .opacity(showSuccess ? 1.0 : 0.0)
-            .animation(.easeInOut(duration: 0.6).delay(0.6), value: showSuccess)
+            .animation(CleanDS.Animation.standard.delay(0.3), value: showSuccess)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .cleanSection()
         .onAppear {
             showSuccess = true
         }

@@ -13,108 +13,107 @@ struct DisclaimerView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 32) {
-            // Header
-            VStack(spacing: 20) {
-                Image("AppLogo")
-                    .resizable()
-                    .frame(width: 64, height: 64)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .scaleEffect(showContent ? 1.0 : 0.5)
-                    .animation(.bouncy(duration: 0.8).delay(0.2), value: showContent)
-                
-                VStack(spacing: 8) {
-                    Text("Welcome to CutClip!")
-                        .font(.largeTitle.weight(.bold))
-                        .foregroundStyle(.primary)
+            VStack(spacing: CleanDS.Spacing.sectionSpacing) {
+                // Clean Header
+                VStack(spacing: CleanDS.Spacing.lg) {
+                    Image("AppLogo")
+                        .resizable()
+                        .frame(width: 56, height: 56)
+                        .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.medium))
+                        .scaleEffect(showContent ? 1.0 : 0.8)
+                        .animation(CleanDS.Animation.smooth.delay(0.1), value: showContent)
                     
-                    Text("Your YouTube video clipping companion")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
+                    VStack(spacing: CleanDS.Spacing.xs) {
+                        Text("Welcome to CutClip")
+                            .font(CleanDS.Typography.headline)
+                            .foregroundColor(CleanDS.Colors.textPrimary)
+                        
+                        Text("YouTube video clipping made simple")
+                            .font(CleanDS.Typography.caption)
+                            .foregroundColor(CleanDS.Colors.textSecondary)
+                    }
+                    .opacity(showContent ? 1.0 : 0.0)
+                    .animation(CleanDS.Animation.standard.delay(0.2), value: showContent)
                 }
-                .opacity(showContent ? 1.0 : 0.0)
-                .animation(.easeInOut(duration: 0.6).delay(0.4), value: showContent)
-            }
-            
-            // Content
-            VStack(spacing: 24) {
-                Text("Let's get you set up! First, here's what you need to know:")
-                    .font(.title3)
-                    .foregroundStyle(.primary)
+                
+                // Clean Content
+                VStack(spacing: CleanDS.Spacing.betweenComponents) {
+                    Text("Before we begin, please note:")
+                        .font(CleanDS.Typography.bodyMedium)
+                        .foregroundColor(CleanDS.Colors.textPrimary)
+                        .opacity(showContent ? 1.0 : 0.0)
+                        .animation(CleanDS.Animation.standard.delay(0.3), value: showContent)
+
+                    VStack(spacing: CleanDS.Spacing.md) {
+                        CleanDisclaimerPoint(
+                            icon: "checkmark.shield.fill",
+                            text: "Follow YouTube's Terms of Service",
+                            delay: 0.4
+                        )
+                        
+                        CleanDisclaimerPoint(
+                            icon: "person.fill.checkmark",
+                            text: "Only download content you have permission to use",
+                            delay: 0.5
+                        )
+                        
+                        CleanDisclaimerPoint(
+                            icon: "heart.fill",
+                            text: "Respect creators' rights and use responsibly",
+                            delay: 0.6
+                        )
+                    }
+                }
+
+                // Clean Terms Agreement
+                Text("By continuing, you agree to our [Terms](https://cutclip.moinulmoin.com/terms) and [Privacy Policy](https://cutclip.moinulmoin.com/privacy)")
+                    .font(CleanDS.Typography.caption)
+                    .foregroundColor(CleanDS.Colors.textSecondary)
                     .multilineTextAlignment(.center)
                     .opacity(showContent ? 1.0 : 0.0)
-                    .animation(.easeInOut(duration: 0.6).delay(0.6), value: showContent)
+                    .animation(CleanDS.Animation.standard.delay(0.7), value: showContent)
 
-                VStack(spacing: 16) {
-                    DisclaimerPoint(
-                        icon: "checkmark.shield.fill",
-                        text: "You're responsible for following YouTube's Terms of Service",
-                        delay: 0.8
-                    )
-                    
-                    DisclaimerPoint(
-                        icon: "person.fill.checkmark",
-                        text: "Only download content you have permission to use",
-                        delay: 1.0
-                    )
-                    
-                    DisclaimerPoint(
-                        icon: "heart.fill",
-                        text: "Use this tool responsibly and respect creators' rights",
-                        delay: 1.2
-                    )
+                // Clean Accept Button
+                CleanActionButton(
+                    "I Understand and Accept",
+                    style: .primary
+                ) {
+                    accepted = true
                 }
-            }
-            .opacity(showContent ? 1.0 : 0.0)
-            .animation(.easeInOut(duration: 0.6).delay(0.8), value: showContent)
-
-            // Terms Agreement
-            Text("By continuing, you agree to our [Terms and Conditions](https://cutclip.moinulmoin.com/terms) and [Privacy Policy](https://cutclip.moinulmoin.com/privacy)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
                 .opacity(showContent ? 1.0 : 0.0)
-                .animation(.easeInOut(duration: 0.6).delay(1.2), value: showContent)
-
-            // Accept Button
-            Button("I Understand and Accept") {
-                accepted = true
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .opacity(showContent ? 1.0 : 0.0)
-            .animation(.easeInOut(duration: 0.6).delay(1.4), value: showContent)
+                .animation(CleanDS.Animation.standard.delay(0.8), value: showContent)
             }
         }
-        .padding(40)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .frame(width: 500, height: 450)
+        .padding(CleanDS.Spacing.containerNormal)
+        .cleanWindow()
+        .cleanContent(maxWidth: 400)
         .onAppear {
             showContent = true
         }
     }
 }
 
-struct DisclaimerPoint: View {
+struct CleanDisclaimerPoint: View {
     let icon: String
     let text: String
     let delay: Double
     @State private var show = false
     
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: CleanDS.Spacing.sm) {
             Image(systemName: icon)
-                .font(.callout)
-                .foregroundStyle(.black.gradient)
-                .frame(width: 20)
+                .font(CleanDS.Typography.body)
+                .foregroundColor(CleanDS.Colors.accent)
+                .frame(width: 18)
             
             Text(text)
-                .font(.callout)
-                .foregroundStyle(.primary)
+                .font(CleanDS.Typography.body)
+                .foregroundColor(CleanDS.Colors.textPrimary)
                 .multilineTextAlignment(.leading)
         }
         .opacity(show ? 1.0 : 0.0)
-        .offset(x: show ? 0 : -20)
-        .animation(.easeInOut(duration: 0.5).delay(delay), value: show)
+        .offset(y: show ? 0 : 10)
+        .animation(CleanDS.Animation.standard.delay(delay), value: show)
         .onAppear {
             show = true
         }

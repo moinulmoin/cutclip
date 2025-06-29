@@ -62,9 +62,10 @@ class DownloadService: ObservableObject, Sendable {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("CutClip")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // Generate a unique, deterministic path for the output file.
-        let uniqueFilename = "\(UUID().uuidString).mp4"
-        let outputPath = tempDir.appendingPathComponent(uniqueFilename)
+        // Generate a unique, deterministic base name (no extension yet)
+        let uniqueBaseName = UUID().uuidString
+        // Allow yt-dlp to choose the right container by expanding %(ext)s
+        let outputTemplate = tempDir.appendingPathComponent("\(uniqueBaseName).%(ext)s").path
 
         // Use an actor to manage state instead of captured variables
         let stateManager = ProcessStateManager()
@@ -74,25 +75,39 @@ class DownloadService: ObservableObject, Sendable {
             process.executableURL = URL(fileURLWithPath: ytDlpPath)
 
             // Build yt-dlp format expression from desired quality
+            // Remove mp4 restriction to allow webm and other formats
             let formatString: String
             if job.quality.lowercased() == "best" {
-                formatString = "bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best"
+                formatString = "bestvideo+bestaudio/best"
             } else if let h = Int(job.quality.lowercased().replacingOccurrences(of: "p", with: "")) {
-                formatString = "best[height<=\(h)][ext=mp4]/best[height<=\(h)]"
+                // Always use height as the quality constraint for consistency
+                // The ClipService will handle aspect ratio scaling appropriately
+                formatString = "bestvideo[height<=\(h)]+bestaudio[ext=m4a]/bestvideo[height<=\(h)]+bestaudio/best[height<=\(h)]/best"
             } else {
-                formatString = "best[height<=720][ext=mp4]/best[height<=720]"
+                formatString = "bestvideo[height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
             }
 
             process.arguments = [
                 "--format", formatString,
-                "--output", outputPath.path,
+                "--output", outputTemplate,
                 "--no-playlist",
+                "--newline",  // Output progress on new lines
+                "--progress",  // Show progress
                 job.url
             ]
+            
+            print("🎬 yt-dlp format string: \(formatString)")
+            print("🎬 Quality requested: \(job.quality)")
 
             let pipe = Pipe()
             process.standardError = pipe
             process.standardOutput = pipe
+            
+            // Security: Set restrictive environment
+            process.environment = [
+                "PATH": "/usr/bin:/bin",
+                "HOME": NSTemporaryDirectory()
+            ]
 
             // Use thread-safe actor for download tracking
             let errorBuffer = ErrorBuffer()
@@ -133,14 +148,17 @@ class DownloadService: ObservableObject, Sendable {
 
                     if !didResume {
                         if process.terminationStatus == 0 {
-                            // The process succeeded, now verify the deterministic file exists.
-                            if FileManager.default.fileExists(atPath: outputPath.path) {
-                                continuation.resume(returning: outputPath.path)
+                            // Search for the file yt-dlp actually created (any extension)
+                            if let finalURL = try? FileManager.default
+                                .contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
+                                .first(where: { $0.lastPathComponent.hasPrefix(uniqueBaseName) }) {
+
+                                continuation.resume(returning: finalURL.path)
                             } else {
-                                // This should rarely happen, but it's a critical failure if it does.
+                                // Rare, but critical if it happens
                                 let outputData = await errorBuffer.outputData
                                 let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error, file not created."
-                                print("❌ yt-dlp claimed success, but output file is missing at \(outputPath.path)")
+                                print("❌ yt-dlp claimed success, but no file with prefix \(uniqueBaseName) was found in \(tempDir.path)")
                                 continuation.resume(throwing: DownloadError.downloadFailed(errorOutput))
                             }
                         } else {

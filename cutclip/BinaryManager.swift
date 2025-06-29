@@ -84,6 +84,8 @@ class BinaryManager: ObservableObject, Sendable {
 
             verificationTask = Task {
                 await verifyBinariesWithFeedback()
+                // Warm up binaries to avoid first-run issues
+                await warmUpBinaries()
                 await MainActor.run {
                     self.verificationTask = nil
                 }
@@ -99,6 +101,18 @@ class BinaryManager: ObservableObject, Sendable {
             ffmpegPath = path
         }
         updateConfigurationStatus()
+    }
+    
+    /// Set binary path without triggering automatic verification
+    /// Used when the binary has already been verified externally
+    func setBinaryPathVerified(for binary: BinaryType, path: String) {
+        switch binary {
+        case .ytDlp:
+            ytDlpPath = path
+        case .ffmpeg:
+            ffmpegPath = path
+        }
+        // Don't trigger automatic verification since binary is pre-verified
     }
 
     nonisolated func verifyBinary(_ binary: BinaryType) async -> Bool {
@@ -181,6 +195,73 @@ class BinaryManager: ObservableObject, Sendable {
             isConfigured = true
         } else {
             isConfigured = false
+        }
+    }
+    
+    /// Mark binaries as configured without additional verification
+    /// Used when binaries have already been verified by AutoSetupService
+    func markAsConfigured() {
+        errorMessage = nil
+        isConfigured = true
+        // Cancel any ongoing verification since we trust the setup process
+        verificationTask?.cancel()
+        verificationTask = nil
+        
+        // Warm up binaries in background
+        Task {
+            await warmUpBinaries()
+        }
+    }
+    
+    /// Warm up binaries to avoid first-run issues
+    nonisolated private func warmUpBinaries() async {
+        print("🔥 Warming up binaries...")
+        
+        // Get paths from MainActor
+        let (ytDlpPath, ffmpegPath) = await MainActor.run {
+            (self.ytDlpPath, self.ffmpegPath)
+        }
+        
+        // Warm up yt-dlp with a simple operation
+        if let ytDlpPath = ytDlpPath {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: ytDlpPath)
+            process.arguments = ["--version"]
+            process.environment = [
+                "PATH": "/usr/bin:/bin",
+                "HOME": NSTemporaryDirectory()
+            ]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            
+            do {
+                try process.run()
+                process.waitUntilExit()
+                print("✅ yt-dlp warmed up (exit code: \(process.terminationStatus))")
+            } catch {
+                print("⚠️ Failed to warm up yt-dlp: \(error)")
+            }
+        }
+        
+        // Warm up ffmpeg
+        if let ffmpegPath = ffmpegPath {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: ffmpegPath)
+            process.arguments = ["-version"]
+            process.environment = [
+                "PATH": "/usr/bin:/bin",
+                "HOME": NSTemporaryDirectory()
+            ]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            
+            do {
+                try process.run()
+                process.waitUntilExit()
+                print("✅ ffmpeg warmed up (exit code: \(process.terminationStatus))")
+            } catch {
+                print("⚠️ Failed to warm up ffmpeg: \(error)")
+            }
         }
     }
 }

@@ -361,6 +361,7 @@ struct ClipperView: View {
             processingProgress = 0.3
             try ErrorHandler.checkDiskSpace()
 
+
             // Create clip job
             let job = ClipJob(
                 url: urlText,

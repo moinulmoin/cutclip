@@ -22,8 +22,8 @@ struct cutclipApp: App {
                     LicenseManager.shared.initializeLicenseSystem()
                 }
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
-        .defaultPosition(.center)
+        .defaultSize(width: DesignSystem.Layout.defaultWindowWidth, height: DesignSystem.Layout.defaultWindowHeight)
+        .windowResizability(.contentMinSize)
+        .defaultPosition(UnitPoint.center)
     }
 }

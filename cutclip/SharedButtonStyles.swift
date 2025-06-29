@@ -32,61 +32,71 @@ extension ButtonStyle {
 }
 
 struct PrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) var isEnabled
+    
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
+            .font(DesignSystem.Typography.bodyBold)
+            .foregroundColor(DesignSystem.Colors.textOnPrimary)
+            .padding(.horizontal, DesignSystem.Spacing.lg)
+            .padding(.vertical, DesignSystem.Spacing.sm)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.black.gradient)
+                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.button)
+                    .fill(isEnabled ? DesignSystem.Colors.primary : DesignSystem.Colors.primary.opacity(0.5))
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .animation(DesignSystem.Animation.quick, value: configuration.isPressed)
     }
 }
 
 struct SecondaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) var isEnabled
+    
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.callout.weight(.medium))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
-            .background(Color(.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(.separatorColor), lineWidth: 0.5)
+            .font(DesignSystem.Typography.body)
+            .foregroundColor(DesignSystem.Colors.textPrimary)
+            .padding(.horizontal, DesignSystem.Spacing.lg)
+            .padding(.vertical, DesignSystem.Spacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.button)
+                    .fill(DesignSystem.Colors.backgroundSecondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.button)
+                            .stroke(DesignSystem.Colors.border, lineWidth: 1)
+                    )
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .animation(DesignSystem.Animation.quick, value: configuration.isPressed)
     }
 }
 
 struct AccentButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) var isEnabled
+    
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .font(DesignSystem.Typography.bodyBold)
+            .foregroundColor(DesignSystem.Colors.textOnPrimary)
+            .padding(.horizontal, DesignSystem.Spacing.lg)
+            .padding(.vertical, DesignSystem.Spacing.sm)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.blue.gradient)
+                RoundedRectangle(cornerRadius: DesignSystem.CornerRadius.button)
+                    .fill(isEnabled ? DesignSystem.Colors.primary : DesignSystem.Colors.primary.opacity(0.5))
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .animation(DesignSystem.Animation.quick, value: configuration.isPressed)
     }
 }
 
 struct LinkButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.callout)
-            .foregroundStyle(.blue)
-            .opacity(configuration.isPressed ? 0.7 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .font(DesignSystem.Typography.body)
+            .foregroundColor(DesignSystem.Colors.primary)
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+            .animation(DesignSystem.Animation.quick, value: configuration.isPressed)
     }
 }
 

@@ -137,7 +137,12 @@ struct YtDlpVideoInfo: Codable {
     let formats: [YtDlpFormat]?
     let subtitles: [String: [YtDlpSubtitle]]?
     let automatic_captions: [String: [YtDlpSubtitle]]?
-    let webpage_url: String
+    let webpage_url: String?  // Make optional in case it's missing
+    
+    // yt-dlp might use different field names
+    let channel: String?
+    let uploader_id: String?
+    let uploader_url: String?
     
     func toVideoInfo() -> VideoInfo {
         let availableFormats = formats?.compactMap { $0.toVideoFormat() } ?? []
@@ -149,12 +154,12 @@ struct YtDlpVideoInfo: Codable {
             description: description,
             duration: duration ?? 0,
             thumbnailURL: thumbnail,
-            channelName: uploader,
+            channelName: uploader ?? channel,
             uploadDate: upload_date,
             viewCount: view_count,
             availableFormats: availableFormats,
             availableCaptions: captions,
-            webpageURL: webpage_url
+            webpageURL: webpage_url ?? "https://www.youtube.com/watch?v=\(id)"
         )
     }
     

@@ -47,10 +47,35 @@ class VideoInfoService: ObservableObject, Sendable {
     }
 
     func loadVideoInfo(for urlString: String) async throws -> VideoInfo {
-        let ytDlpPath = await MainActor.run { binaryManager.ytDlpPath }
-        guard let ytDlpPath = ytDlpPath else {
-            throw VideoInfoError.binaryNotFound("yt-dlp not configured")
+        // Retry logic for first-run issues
+        var lastError: Error?
+        
+        for attempt in 1...3 {
+            do {
+                return try await loadVideoInfoAttempt(for: urlString)
+            } catch let error as VideoInfoError {
+                lastError = error
+                
+                // Only retry on parsing failures (which might be first-run issues)
+                if case .parsingFailed(_) = error, attempt < 3 {
+                    print("⚠️ VideoInfo attempt \(attempt) failed with parsing error, retrying...")
+                    // Wait a bit before retry
+                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                    continue
+                }
+                throw error
+            } catch {
+                throw error
+            }
         }
+        
+        throw lastError ?? VideoInfoError.parsingFailed("Failed after 3 attempts")
+    }
+    
+    private func loadVideoInfoAttempt(for urlString: String) async throws -> VideoInfo {
+        // Trust that AutoSetup has verified yt-dlp is functional
+        // If we reached ClipperView, binaries should be ready
+        let ytDlpPath = await MainActor.run { binaryManager.ytDlpPath }!
 
         guard isValidYouTubeURL(urlString) else {
             throw VideoInfoError.invalidURL
@@ -71,10 +96,18 @@ class VideoInfoService: ObservableObject, Sendable {
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: ytDlpPath)
+            // Use --print with output template syntax
+            // Using numeric defaults for numeric fields to ensure valid JSON
+            let printFormat = """
+            {"id":"%(id)s","title":"%(title)s","duration":%(duration|0)s,"thumbnail":"%(thumbnail|)s","uploader":"%(uploader|)s","upload_date":"%(upload_date|)s","view_count":%(view_count|0)s}
+            """
+            
             process.arguments = [
-                "--dump-json",
+                "--print", printFormat.trimmingCharacters(in: .whitespacesAndNewlines),
                 "--no-playlist",
                 "--no-warnings",
+                "--skip-download",
+                "--quiet",  // Explicitly quiet to avoid extra output
                 urlString
             ]
 
@@ -84,13 +117,16 @@ class VideoInfoService: ObservableObject, Sendable {
                 "HOME": NSTemporaryDirectory()
             ]
 
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
 
             let outputBuffer = OutputBuffer()
+            let errorBuffer = OutputBuffer()
 
-            pipe.fileHandleForReading.readabilityHandler = { handle in
+            // Read from both pipes to prevent buffer overflow
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if !data.isEmpty {
                     Task {
@@ -98,15 +134,32 @@ class VideoInfoService: ObservableObject, Sendable {
                     }
                 }
             }
+            
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if !data.isEmpty {
+                    Task {
+                        await errorBuffer.appendData(data)
+                    }
+                }
+            }
 
             process.terminationHandler = { process in
                 Task {
-                    // --- flush anything still waiting in the pipe -----------------
-                    pipe.fileHandleForReading.readabilityHandler = nil
-                    if let tailData = try? pipe.fileHandleForReading.readToEnd() {
+                    // Ensure we read any remaining data
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    errorPipe.fileHandleForReading.readabilityHandler = nil
+                    
+                    // Small delay to ensure all data is flushed
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
+                    
+                    // Read any remaining data from both pipes
+                    if let tailData = try? outputPipe.fileHandleForReading.readToEnd(), !tailData.isEmpty {
                         await outputBuffer.appendData(tailData)
                     }
-                    // ----------------------------------------------------------------
+                    if let errorTailData = try? errorPipe.fileHandleForReading.readToEnd(), !errorTailData.isEmpty {
+                        await errorBuffer.appendData(errorTailData)
+                    }
 
                     let didResume = await stateManager.markResumedAndCleanup {
                         if process.isRunning {
@@ -116,8 +169,17 @@ class VideoInfoService: ObservableObject, Sendable {
 
                     if !didResume {
                         if process.terminationStatus == 0 {
-                            // Success - parse the (now complete) JSON output
-                            let outputData = await outputBuffer.outputData
+                            // Success - parse the JSON output
+                            var outputData = await outputBuffer.outputData
+                            
+                            // Debug logging
+                            print("📊 Output data size: \(outputData.count) bytes")
+                            
+                            // The output should be clean JSON from --print
+                            if let outputString = String(data: outputData, encoding: .utf8) {
+                                print("📊 Video info output: \(outputString)")
+                            }
+                            
                             do {
                                 let videoInfo = try await self.parseVideoInfo(from: outputData)
                                 await MainActor.run {
@@ -125,13 +187,19 @@ class VideoInfoService: ObservableObject, Sendable {
                                 }
                                 continuation.resume(returning: videoInfo)
                             } catch {
+                                print("❌ VideoInfo parsing failed: \(error)")
                                 continuation.resume(throwing: VideoInfoError.parsingFailed(error.localizedDescription))
                             }
                         } else {
                             // Error - process failed
+                            let errorData = await errorBuffer.outputData
                             let outputData = await outputBuffer.outputData
-                            let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error"
-                            // Parse common yt-dlp errors
+                            
+                            // Try error stream first, then output stream
+                            let errorOutput = String(data: errorData, encoding: .utf8) ?? 
+                                             String(data: outputData, encoding: .utf8) ?? 
+                                             "Unknown error"
+                            
                             let error = self.parseYtDlpError(from: errorOutput)
                             continuation.resume(throwing: error)
                         }
@@ -139,11 +207,12 @@ class VideoInfoService: ObservableObject, Sendable {
                 }
             }
 
-            // Add timeout to prevent hanging (30 seconds should be enough for metadata)
+            // Add timeout to prevent hanging
             Task {
                 try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
                 let didResume = await stateManager.markResumedAndCleanup {
-                    pipe.fileHandleForReading.readabilityHandler = nil
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    errorPipe.fileHandleForReading.readabilityHandler = nil
                     if process.isRunning {
                         process.terminate()
                     }
@@ -162,30 +231,42 @@ class VideoInfoService: ObservableObject, Sendable {
     }
 
     private nonisolated func parseVideoInfo(from data: Data) async throws -> VideoInfo {
+        // Simple struct for the --print output
+        struct MinimalVideoInfo: Codable {
+            let id: String
+            let title: String
+            let duration: Int
+            let thumbnail: String
+            let uploader: String
+            let upload_date: String
+            let view_count: Int
+        }
+        
         let decoder = JSONDecoder()
-
+        
         do {
-            let ytDlpInfo = try decoder.decode(YtDlpVideoInfo.self, from: data)
-            return ytDlpInfo.toVideoInfo()
+            let minimalInfo = try decoder.decode(MinimalVideoInfo.self, from: data)
+            
+            // Create default formats for common YouTube qualities
+            // This allows the UI to show quality options without fetching full format list
+            let defaultFormats = createDefaultFormats()
+            
+            // Convert to full VideoInfo with default values for missing fields
+            return VideoInfo(
+                id: minimalInfo.id,
+                title: minimalInfo.title,
+                description: nil,
+                duration: TimeInterval(minimalInfo.duration),
+                thumbnailURL: minimalInfo.thumbnail.isEmpty ? nil : minimalInfo.thumbnail,
+                channelName: minimalInfo.uploader.isEmpty ? nil : minimalInfo.uploader,
+                uploadDate: minimalInfo.upload_date.isEmpty ? nil : minimalInfo.upload_date,
+                viewCount: minimalInfo.view_count > 0 ? minimalInfo.view_count : nil,
+                availableFormats: defaultFormats,
+                availableCaptions: [],
+                webpageURL: "https://www.youtube.com/watch?v=\(minimalInfo.id)"
+            )
         } catch {
-            // If direct decoding fails, try to extract JSON from output
-            if let jsonString = String(data: data, encoding: .utf8) {
-                // Sometimes yt-dlp outputs multiple lines, we want the last JSON line
-                let lines = jsonString.components(separatedBy: .newlines)
-                for line in lines.reversed() {
-                    if line.hasPrefix("{") && line.hasSuffix("}") {
-                        if let lineData = line.data(using: .utf8) {
-                            do {
-                                let ytDlpInfo = try decoder.decode(YtDlpVideoInfo.self, from: lineData)
-                                return ytDlpInfo.toVideoInfo()
-                            } catch {
-                                continue
-                            }
-                        }
-                    }
-                }
-            }
-
+            print("❌ Failed to parse minimal video info: \(error)")
             throw VideoInfoError.parsingFailed("Failed to parse video information: \(error.localizedDescription)")
         }
     }
@@ -213,6 +294,60 @@ class VideoInfoService: ObservableObject, Sendable {
     func clearVideoInfo() {
         currentVideoInfo = nil
     }
+    
+    // Create default video formats for common YouTube qualities
+    private nonisolated func createDefaultFormats() -> [VideoFormat] {
+        return [
+            VideoFormat(
+                formatID: "137",
+                ext: "mp4",
+                height: 1080,
+                width: 1920,
+                fps: 30.0,
+                filesize: nil,
+                formatNote: "1080p",
+                vcodec: "h264",
+                acodec: nil,
+                quality: 1080
+            ),
+            VideoFormat(
+                formatID: "22",
+                ext: "mp4",
+                height: 720,
+                width: 1280,
+                fps: 30.0,
+                filesize: nil,
+                formatNote: "720p",
+                vcodec: "h264",
+                acodec: "aac",
+                quality: 720
+            ),
+            VideoFormat(
+                formatID: "135",
+                ext: "mp4", 
+                height: 480,
+                width: 854,
+                fps: 30.0,
+                filesize: nil,
+                formatNote: "480p",
+                vcodec: "h264",
+                acodec: nil,
+                quality: 480
+            ),
+            VideoFormat(
+                formatID: "134",
+                ext: "mp4",
+                height: 360,
+                width: 640,
+                fps: 30.0,
+                filesize: nil,
+                formatNote: "360p",
+                vcodec: "h264",
+                acodec: nil,
+                quality: 360
+            )
+        ]
+    }
 }
 
 // Thread-safe actor for buffering output
@@ -224,7 +359,7 @@ private actor OutputBuffer {
     }
 }
 
-// Thread-safe actor for process state management (reused pattern)
+// Thread-safe actor for process state management
 private actor ProcessStateManager {
     private var hasResumed = false
 

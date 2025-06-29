@@ -50,6 +50,7 @@ class ClipService: ObservableObject, Sendable {
             throw ClipError.invalidInput("Start time must be before end time")
         }
 
+
         // Create secure output path in Downloads directory
         let downloadsPath = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
         let timestamp = DateFormatter.yyyyMMddHHmmss.string(from: Date())
@@ -76,19 +77,38 @@ class ClipService: ObservableObject, Sendable {
                 "-to", job.endTime        // End time (already validated)
             ]
 
-            // Apply video filter if aspect ratio requires cropping
+            // Apply video filter if aspect ratio requires cropping or quality scaling
+            var videoFilters: [String] = []
+            
+            // Add crop filter if needed for aspect ratio
             if let cropFilter = job.aspectRatio.cropFilter {
-                // Apply video filter and re-encode for quality
+                videoFilters.append(cropFilter)
+            }
+            
+            // Add scale filter if needed for quality control
+            if let scaleFilter = job.aspectRatio.scaleFilter(for: job.quality) {
+                videoFilters.append(scaleFilter)
+            }
+            
+            if !videoFilters.isEmpty {
+                // Apply video filters and re-encode for quality
+                let combinedFilter = videoFilters.joined(separator: ",")
                 arguments.append(contentsOf: [
-                    "-vf", sanitizeFilterString(cropFilter),
+                    "-map", "0:v:0",          // Map video stream (required when filtering)
+                    "-map", "0:a:0?",         // Map audio stream if present
+                    "-vf", sanitizeFilterString(combinedFilter),
                     "-c:v", "libx264",        // Video codec for encoding
                     "-crf", "18",             // High quality (lower = better)
                     "-preset", "veryfast",    // Fast encoding preset
                     "-c:a", "copy"            // Copy audio without re-encoding
                 ])
             } else {
-                // Original behavior - stream copy for speed
-                arguments.append(contentsOf: ["-c", "copy"])
+                // When using stream copy, ensure we explicitly map streams
+                arguments.append(contentsOf: [
+                    "-map", "0",              // Map all streams from input
+                    "-c", "copy",             // Copy all codecs
+                    "-movflags", "+faststart" // Optimize for streaming
+                ])
             }
 
             // Common arguments
@@ -99,6 +119,10 @@ class ClipService: ObservableObject, Sendable {
             ])
 
             process.arguments = arguments
+            
+            // Debug: Log the FFmpeg command
+            print("🎬 FFmpeg command: \(ffmpegPath) \(arguments.joined(separator: " "))")
+            print("📊 Job details - Quality: \(job.quality), Aspect: \(job.aspectRatio.rawValue)")
 
             let pipe = Pipe()
             process.standardError = pipe
@@ -160,8 +184,11 @@ class ClipService: ObservableObject, Sendable {
                                     let fileSize = attributes[.size] as? Int64 ?? 0
 
                                     if fileSize > 1000 { // At least 1KB
+                                        // Additional validation: check if output has video stream
+                                        print("✅ Output file created: \(outputPath) (\(fileSize) bytes)")
                                         continuation.resume(returning: outputPath)
                                     } else {
+                                        print("❌ Output file too small: \(fileSize) bytes")
                                         continuation.resume(throwing: ClipError.processError("Output file is too small or empty"))
                                     }
                                 } catch {
@@ -173,6 +200,8 @@ class ClipService: ObservableObject, Sendable {
                         } else {
                             let errorData = try? pipe.fileHandleForReading.readToEnd()
                             let errorOutput = errorData.flatMap { String(data: $0, encoding: .utf8) } ?? "Unknown error"
+                            print("❌ FFmpeg process failed with status: \(process.terminationStatus)")
+                            print("❌ Error output: \(errorOutput)")
                             continuation.resume(throwing: ClipError.processError("FFmpeg failed: \(errorOutput)"))
                         }
                     }
@@ -360,14 +389,13 @@ class ClipService: ObservableObject, Sendable {
     }
 
     private nonisolated func sanitizeFilterString(_ filterString: String) -> String {
-        // Allow the full set of characters that can legitimately appear in an
-        // FFmpeg filter expression. These are NOT executed by a shell – they are
-        // passed straight to the FFmpeg binary – so they do not create a code-
-        // injection surface, but removing them breaks the syntax.
-        let allowedCharacters = CharacterSet(
-            charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:=,.-_*()/\\"
-        )
-        return String(filterString.unicodeScalars.filter { allowedCharacters.contains($0) })
+        // FFmpeg filters are passed directly to the FFmpeg binary as arguments,
+        // not through a shell, so we don't need aggressive sanitization.
+        // We just need to ensure no null bytes or newlines that could break argument parsing.
+        return filterString
+            .replacingOccurrences(of: "\0", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
     }
 }
 

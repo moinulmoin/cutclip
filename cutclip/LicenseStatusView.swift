@@ -19,100 +19,110 @@ struct LicenseStatusView: View {
     @State private var validationTask: Task<Void, Never>?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: CleanDS.Spacing.sectionSpacing) {
-            // Clean Header
-            VStack(spacing: CleanDS.Spacing.lg) {
+        VStack(spacing: 0) {
+            // Clean Header - Full Width
+            HStack(spacing: CleanDS.Spacing.sm) {
+                Spacer()
+                
                 Image("AppLogo")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.medium))
+                    .frame(width: 36, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.small))
 
-                VStack(spacing: CleanDS.Spacing.xs) {
-                    Text("CutClip")
-                        .font(CleanDS.Typography.headline)
-                        .foregroundColor(CleanDS.Colors.textPrimary)
-
-                    Text("License & Usage Status")
-                        .font(CleanDS.Typography.caption)
-                        .foregroundColor(CleanDS.Colors.textSecondary)
-                }
+                Text("CutClip")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(CleanDS.Colors.textPrimary)
+                
+                Spacer()
             }
-
-            // License Status Section
-            VStack(spacing: CleanDS.Spacing.betweenComponents) {
-                if licenseManager.isLoading {
-                    VStack(spacing: CleanDS.Spacing.sm) {
-                        ProgressView()
-                            .scaleEffect(1.0)
-                            .tint(CleanDS.Colors.accent)
-                        Text("Checking license status...")
-                            .font(CleanDS.Typography.body)
-                            .foregroundColor(CleanDS.Colors.textSecondary)
-                    }
-                    .cleanSection()
-                } else {
-                    // Current status display
-                    statusDisplay
-
-                    // License Input and Activation
-                    VStack(spacing: CleanDS.Spacing.md) {
-                        CleanSectionHeader(title: "Activate License")
-                        
-                        CleanInputField(
-                            label: "License Key",
-                            text: $licenseKeyInput,
-                            placeholder: "Enter your license key",
-                            isDisabled: isValidating
-                        )
-
-                        CleanActionButton(
-                            isValidating ? "Validating..." : "Activate License",
-                            icon: isValidating ? "" : "key.fill",
-                            style: .primary,
-                            isDisabled: licenseKeyInput.isEmpty || isValidating
-                        ) {
-                            validationTask?.cancel()
-                            validationTask = Task {
-                                await validateLicenseKey()
-                                validationTask = nil
+            .padding(.horizontal, CleanDS.Spacing.containerNormal)
+            .padding(.vertical, CleanDS.Spacing.sm)
+            .frame(maxWidth: .infinity)
+            .background(
+                CleanDS.Colors.backgroundPrimary
+                    .overlay(
+                        Color.white.opacity(0.05)
+                    )
+            )
+            
+            // Main Content - Constrained Width
+            ScrollView {
+                VStack(spacing: CleanDS.Spacing.sectionSpacing) {
+                    // License Status Section
+                    VStack(spacing: CleanDS.Spacing.betweenComponents) {
+                        if licenseManager.isLoading {
+                            VStack(spacing: CleanDS.Spacing.sm) {
+                                ProgressView()
+                                    .scaleEffect(1.0)
+                                    .tint(CleanDS.Colors.accent)
+                                Text("Checking license status...")
+                                    .font(CleanDS.Typography.body)
+                                    .foregroundColor(CleanDS.Colors.textSecondary)
                             }
-                        }
-                    }
-                    .cleanSection()
+                            .cleanSection()
+                        } else {
+                            // Current status display
+                            statusDisplay
 
-                    // Error display
-                    if let error = validationError ?? licenseManager.errorMessage {
-                        HStack(spacing: CleanDS.Spacing.xs) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(CleanDS.Colors.error)
-                            Text(error)
-                                .font(CleanDS.Typography.caption)
-                                .foregroundColor(CleanDS.Colors.error)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(CleanDS.Spacing.md)
-                        .background(
-                            RoundedRectangle(cornerRadius: CleanDS.Radius.medium)
-                                .fill(CleanDS.Colors.error.opacity(0.05))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: CleanDS.Radius.medium)
-                                        .stroke(CleanDS.Colors.error.opacity(0.2), lineWidth: 1)
+                            // License Input and Activation
+                            VStack(spacing: CleanDS.Spacing.md) {
+                                CleanSectionHeader(title: "Activate License")
+                                
+                                CleanInputField(
+                                    label: "License Key",
+                                    text: $licenseKeyInput,
+                                    placeholder: "Enter your license key",
+                                    isDisabled: isValidating
                                 )
-                        )
-                    }
 
-                    // Action buttons
-                    actionButtons
+                                CleanActionButton(
+                                    isValidating ? "Validating..." : "Activate License",
+                                    icon: isValidating ? "" : "key.fill",
+                                    style: .primary,
+                                    isDisabled: licenseKeyInput.isEmpty || isValidating
+                                ) {
+                                    validationTask?.cancel()
+                                    validationTask = Task {
+                                        await validateLicenseKey()
+                                        validationTask = nil
+                                    }
+                                }
+                            }
+                            .cleanSection()
+
+                            // Error display
+                            if let error = validationError ?? licenseManager.errorMessage {
+                                HStack(spacing: CleanDS.Spacing.xs) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(CleanDS.Colors.error)
+                                    Text(error)
+                                        .font(CleanDS.Typography.caption)
+                                        .foregroundColor(CleanDS.Colors.error)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .padding(CleanDS.Spacing.md)
+                                .background(
+                                    RoundedRectangle(cornerRadius: CleanDS.Radius.medium)
+                                        .fill(CleanDS.Colors.error.opacity(0.05))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: CleanDS.Radius.medium)
+                                                .stroke(CleanDS.Colors.error.opacity(0.2), lineWidth: 1)
+                                        )
+                                )
+                            }
+
+                            // Action buttons
+                            actionButtons
+                        }
+                    }
                 }
-            }
+                .padding(CleanDS.Spacing.containerNormal)
+                .cleanContent(maxWidth: 420)
             }
         }
-        .padding(CleanDS.Spacing.containerNormal)
         .cleanWindow()
-        .cleanContent(maxWidth: 420)
         .overlay(alignment: .topTrailing) {
             // Clean close button
             Button {
@@ -124,7 +134,7 @@ struct LicenseStatusView: View {
             }
             .cleanGhostButton()
             .keyboardShortcut(.escape, modifiers: [])
-            .padding(CleanDS.Spacing.sm)
+            .padding(CleanDS.Spacing.md)
         }
         .onAppear {
             validationTask?.cancel()

@@ -7,29 +7,81 @@
 
 import Foundation
 import SwiftUI
+import AppKit
 
 @MainActor
 class ErrorHandler: ObservableObject {
     @Published var currentError: AppError?
     @Published var showingAlert = false
+    @Published var showingInitSheet = false
+    var retryAction: (() -> Void)?
+    var quitAction: (() -> Void)?
+    var isInitializationError = false
+    var alertID = UUID()
     
-    func handle(_ error: Error) {
+    func handle(_ error: Error, retryAction: (() -> Void)? = nil) {
         if let appError = error as? AppError {
             self.currentError = appError
         } else {
             self.currentError = AppError.unknown(error.localizedDescription)
         }
+        self.retryAction = retryAction
         self.showingAlert = true
     }
     
-    func showError(_ error: AppError) {
+    func showError(_ error: AppError, retryAction: (() -> Void)? = nil, isInitialization: Bool = false) {
+        // If an alert is already showing, don't override it immediately
+        guard !showingAlert && !showingInitSheet else {
+            print("⚠️ ErrorHandler.showError - alert already showing, ignoring new error: \(error.errorTitle)")
+            return
+        }
+        
+        alertID = UUID()
+        print("🚨 ErrorHandler.showError - alertID: \(alertID), error: \(error.errorTitle), isInitialization: \(isInitialization), isRetryable: \(error.isRetryable)")
         self.currentError = error
-        self.showingAlert = true
+        self.retryAction = retryAction
+        self.isInitializationError = isInitialization
+        
+        if isInitialization {
+            self.quitAction = {
+                NSApplication.shared.terminate(nil)
+            }
+            // Use sheet for initialization errors to avoid automatic Cancel button
+            self.showingInitSheet = true
+        } else {
+            // Use alert for normal errors
+            self.showingAlert = true
+        }
     }
     
     func clearError() {
         currentError = nil
         showingAlert = false
+        showingInitSheet = false
+        retryAction = nil
+        quitAction = nil
+        isInitializationError = false
+    }
+    
+    /// Enhanced error handling that uses NetworkMonitor for better diagnostics
+    func handleNetworkError(_ error: Error, retryAction: (() -> Void)? = nil, isInitialization: Bool = false) {
+        let diagnosis = NetworkMonitor.shared.diagnoseNetworkError(error)
+        
+        // Create appropriate AppError based on diagnosis
+        let appError: AppError
+        switch diagnosis {
+        case .noInternetConnection:
+            appError = .network(diagnosis.userMessage)
+        case .serverUnreachable, .serverTimeout, .connectionLost:
+            appError = .network(diagnosis.userMessage)
+        case .serverError(let message):
+            appError = .network("Server error: \(message)")
+        case .unknownError(let message):
+            appError = .unknown(message)
+        }
+        
+        // Show error with appropriate options
+        showError(appError, retryAction: diagnosis.isRetryable ? retryAction : nil, isInitialization: isInitialization)
     }
     
     // System checks
@@ -311,31 +363,52 @@ struct ErrorAlertView: ViewModifier {
     
     func body(content: Content) -> some View {
         content
+            // Normal errors use alert
             .alert(
                 errorHandler.currentError?.errorTitle ?? "Error",
-                isPresented: $errorHandler.showingAlert,
-                presenting: errorHandler.currentError
-            ) { error in
-                Button("Dismiss", role: .cancel) {
+                isPresented: $errorHandler.showingAlert
+            ) {
+                Button("OK", role: .cancel) {
                     errorHandler.clearError()
                 }
-                
-                if error.isRetryable {
+                if let error = errorHandler.currentError, error.isRetryable {
                     Button("Retry") {
+                        let retryAction = errorHandler.retryAction
                         errorHandler.clearError()
-                        // Retry logic would be handled by the calling view
+                        retryAction?()
                     }
                 }
-            } message: { error in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(error.errorDescription ?? "An unknown error occurred")
-                        .font(.callout)
-                    
-                    if let suggestion = error.recoverySuggestion {
-                        Text(suggestion)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            } message: {
+                if let error = errorHandler.currentError {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(error.errorDescription ?? "An unknown error occurred")
+                            .font(.callout)
+                        
+                        if let suggestion = error.recoverySuggestion {
+                            Text(suggestion)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                }
+            }
+            // Initialization errors use sheet to avoid automatic Cancel button
+            .sheet(isPresented: $errorHandler.showingInitSheet) {
+                if let error = errorHandler.currentError {
+                    InitializationErrorView(
+                        error: error,
+                        onRetry: {
+                            let action = errorHandler.retryAction
+                            errorHandler.clearError()
+                            action?()
+                        },
+                        onQuit: {
+                            let action = errorHandler.quitAction
+                            errorHandler.clearError()
+                            action?()
+                        }
+                    )
+                    .interactiveDismissDisabled() // Prevent dismissing with Esc or clicking outside
                 }
             }
     }

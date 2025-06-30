@@ -18,6 +18,7 @@ struct CleanClipperView: View {
     @EnvironmentObject private var errorHandler: ErrorHandler
     @EnvironmentObject private var licenseManager: LicenseManager
     @EnvironmentObject private var usageTracker: UsageTracker
+    @StateObject private var networkMonitor = NetworkMonitor.shared
 
     @State private var isProcessing = false
     @State private var processingProgress: Double = 0.0
@@ -43,12 +44,12 @@ struct CleanClipperView: View {
     let aspectRatioOptions: [ClipJob.AspectRatio] = [.original, .nineSixteen, .oneOne, .fourThree]
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                // Clean Header
-                headerSection
-                
-                // Main Content
+        VStack(spacing: 0) {
+            // Clean Header - Full Width
+            headerSection
+            
+            // Main Content - Constrained Width
+            ScrollView {
                 VStack(spacing: CleanDS.Spacing.sectionSpacing) {
                     // URL Input Section
                     urlInputSection
@@ -82,10 +83,10 @@ struct CleanClipperView: View {
                     actionSection
                 }
                 .padding(CleanDS.Spacing.containerNormal)
+                .cleanContent(maxWidth: 500)
             }
         }
         .cleanWindow()
-        .cleanContent(maxWidth: 500)
         .sheet(isPresented: $showingLicenseView) {
             LicenseStatusView()
                 .environmentObject(licenseManager)
@@ -108,44 +109,42 @@ struct CleanClipperView: View {
     // MARK: - Header Section
     @ViewBuilder
     private var headerSection: some View {
-        VStack(spacing: CleanDS.Spacing.sm) {
-            HStack {
-                VStack(alignment: .leading, spacing: CleanDS.Spacing.xs) {
-                    Text("CutClip")
-                        .font(CleanDS.Typography.headline)
-                        .foregroundColor(CleanDS.Colors.textPrimary)
-                    
-                    Text("Create clips from YouTube videos")
-                        .font(CleanDS.Typography.caption)
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("CutClip")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(CleanDS.Colors.textPrimary)
+                
+                Text("Create clips from YouTube videos")
+                    .font(CleanDS.Typography.caption)
+                    .foregroundColor(CleanDS.Colors.textSecondary)
+            }
+            
+            Spacer()
+            
+            HStack(spacing: CleanDS.Spacing.sm) {
+                // Status indicator
+                CleanStatusIndicator(
+                    licenseStatus: licenseManager.licenseStatus,
+                    onUpgrade: { showingLicenseView = true }
+                )
+                
+                // Settings button
+                Button(action: { showingLicenseView = true }) {
+                    Image(systemName: "gearshape")
+                        .font(CleanDS.Typography.body)
                         .foregroundColor(CleanDS.Colors.textSecondary)
                 }
-                
-                Spacer()
-                
-                HStack(spacing: CleanDS.Spacing.sm) {
-                    // Status indicator
-                    CleanStatusIndicator(
-                        licenseStatus: licenseManager.licenseStatus,
-                        onUpgrade: { showingLicenseView = true }
-                    )
-                    
-                    // Settings button
-                    Button(action: { showingLicenseView = true }) {
-                        Image(systemName: "gearshape")
-                            .font(CleanDS.Typography.body)
-                            .foregroundColor(CleanDS.Colors.textSecondary)
-                    }
-                    .cleanGhostButton()
-                }
+                .cleanGhostButton()
             }
         }
-        .padding(CleanDS.Spacing.containerNormal)
-        .background(CleanDS.Colors.backgroundSecondary)
-        .overlay(
-            Rectangle()
-                .frame(height: 1)
-                .foregroundColor(CleanDS.Colors.borderLight),
-            alignment: .bottom
+        .padding(.horizontal, CleanDS.Spacing.containerNormal)
+        .padding(.vertical, CleanDS.Spacing.md)
+        .background(
+            CleanDS.Colors.backgroundPrimary
+                .overlay(
+                    Color.white.opacity(0.05)
+                )
         )
     }
     
@@ -261,8 +260,7 @@ struct CleanClipperView: View {
                 .font(CleanDS.Typography.body)
                 .foregroundColor(CleanDS.Colors.textSecondary)
                 .frame(maxWidth: .infinity)
-                .padding(CleanDS.Spacing.lg)
-                .cleanSection()
+                .padding(.vertical, CleanDS.Spacing.md)
         }
     }
     
@@ -347,7 +345,7 @@ struct CleanClipperView: View {
                 insertion: .opacity.combined(with: .scale(scale: 0.98)),
                 removal: .opacity
             ))
-        } else if !isProcessing {
+        } else if !isProcessing && loadedVideoInfo != nil {
             CleanActionButton(
                 "Create Clip",
                 icon: "scissors",
@@ -474,7 +472,9 @@ extension CleanClipperView {
             // Check network connectivity
             processingMessage = "Checking network..."
             processingProgress = 0.2
-            try await ErrorHandler.checkNetworkConnectivity()
+            guard networkMonitor.requireNetwork() else {
+                throw AppError.network("No internet connection. Please check your network settings.")
+            }
 
             // Check disk space
             processingMessage = "Checking disk space..."

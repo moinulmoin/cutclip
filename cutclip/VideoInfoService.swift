@@ -170,7 +170,7 @@ class VideoInfoService: ObservableObject, Sendable {
                     if !didResume {
                         if process.terminationStatus == 0 {
                             // Success - parse the JSON output
-                            var outputData = await outputBuffer.outputData
+                            let outputData = await outputBuffer.outputData
                             
                             // Debug logging
                             print("📊 Output data size: \(outputData.count) bytes")

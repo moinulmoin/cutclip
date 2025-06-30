@@ -12,6 +12,7 @@ struct ContentView: View {
     @StateObject private var errorHandler = ErrorHandler()
     @StateObject private var licenseManager = LicenseManager.shared
     @StateObject private var usageTracker = UsageTracker.shared
+    @StateObject private var networkMonitor = NetworkMonitor.shared
     @AppStorage("disclaimerAccepted") private var disclaimerAccepted = false
     @State private var currentView: AppView = .disclaimer
     
@@ -75,13 +76,40 @@ struct ContentView: View {
                 }
             }
             .animation(CleanDS.Animation.smooth, value: currentView)
+            
+            // Network status overlay
+            if !networkMonitor.isConnected {
+                VStack {
+                    HStack(spacing: CleanDS.Spacing.sm) {
+                        Image(systemName: "wifi.slash")
+                            .font(.system(size: 14))
+                        Text("No Internet Connection")
+                            .font(CleanDS.Typography.caption)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, CleanDS.Spacing.md)
+                    .padding(.vertical, CleanDS.Spacing.sm)
+                    .background(Color.red)
+                    .cornerRadius(CleanDS.Radius.small)
+                    .shadow(radius: 4)
+                    
+                    Spacer()
+                }
+                .padding(.top, CleanDS.Spacing.md)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .animation(CleanDS.Animation.smooth, value: networkMonitor.isConnected)
+            }
         }
         .errorAlert(errorHandler)
         .onChange(of: disclaimerAccepted) { updateCurrentView() }
         .onChange(of: binaryManager.isConfigured) { updateCurrentView() }
         .onChange(of: licenseManager.isInitialized) { updateCurrentView() }
         .onChange(of: licenseManager.needsLicenseSetup) { updateCurrentView() }
-        .onAppear { updateCurrentView() }
+        .onAppear {
+            // Set error handler for license manager
+            licenseManager.errorHandler = errorHandler
+            updateCurrentView()
+        }
     }
     
     private func updateCurrentView() {
@@ -92,9 +120,11 @@ struct ContentView: View {
                 currentView = .autoSetup
             } else if !licenseManager.isInitialized {
                 currentView = .loading
-            } else if licenseManager.needsLicenseSetup {
+            } else if licenseManager.needsLicenseSetup && !licenseManager.hasNetworkError {
+                // Only show license setup if it's not due to a network error
                 currentView = .licenseSetup
             } else {
+                // Show main view even with network errors
                 currentView = .main
             }
         }

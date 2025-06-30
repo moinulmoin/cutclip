@@ -18,11 +18,14 @@ class LicenseManager: ObservableObject {
     @Published var errorMessage: String?
     @Published var needsLicenseSetup = false
     @Published var isInitialized = false
+    @Published var hasNetworkError = false
 
     // Services
     private let deviceIdentifier = DeviceIdentifier.shared
     private let secureStorage = SecureStorage.shared
     private let usageTracker = UsageTracker.shared
+    private let networkMonitor = NetworkMonitor.shared
+    weak var errorHandler: ErrorHandler?
 
     // Task management
     private var initializationTask: Task<Void, Never>?
@@ -43,6 +46,7 @@ class LicenseManager: ObservableObject {
         initializationTask?.cancel()
 
         isLoading = true
+        hasNetworkError = false
 
         initializationTask = Task {
             await performInitialSetup()
@@ -53,9 +57,22 @@ class LicenseManager: ObservableObject {
             }
         }
     }
+    
+    func retryInitialization() {
+        // Reset state
+        isInitialized = false
+        hasNetworkError = false
+        errorMessage = nil
+        
+        // Retry initialization
+        initializeLicenseSystem()
+    }
 
     private func performInitialSetup() async {
         print("🔐 Initializing license system...")
+        
+        // Clean up legacy keychain items to prevent access prompts
+        secureStorage.cleanupLegacyKeychainItems()
 
         do {
             // 1. Initialize usage tracking and register device if needed
@@ -74,11 +91,17 @@ class LicenseManager: ObservableObject {
         } catch {
             print("❌ Failed to initialize license system: \(error)")
 
-            // Provide specific error messages based on error type
+            // Handle specific error types
             if let usageError = error as? UsageError {
+                hasNetworkError = true
+                let errorMessage: String
+                
                 switch usageError {
                 case .networkError:
-                    errorMessage = "No internet connection. Please check your connection and restart the app."
+                    // Use NetworkMonitor to check if it's device or server issue
+                    errorMessage = networkMonitor.isConnected ? 
+                        "Could not connect to CutClip servers." : 
+                        "No internet connection. Please check your network settings."
                 case .serverError(let code) where code >= 500:
                     errorMessage = "Server temporarily unavailable. Please try again in a moment."
                 case .serverError(_):
@@ -86,23 +109,63 @@ class LicenseManager: ObservableObject {
                 case .invalidResponse, .decodingError:
                     errorMessage = "Server communication error. Please try again later."
                 default:
-                    errorMessage = "Failed to initialize CutClip. Please restart the app."
+                    hasNetworkError = false
+                    self.errorMessage = "Failed to initialize CutClip. Please restart the app."
+                    return
                 }
-            } else if error is URLError {
-                errorMessage = "No internet connection. Please check your connection and restart the app."
-            } else if error.localizedDescription.contains("network") || error.localizedDescription.contains("connection") {
-                errorMessage = "No internet connection. Please check your connection and restart the app."
+                
+                if let handler = errorHandler {
+                    await MainActor.run { [weak self] in
+                        handler.showError(
+                            AppError.network(errorMessage), 
+                            retryAction: { self?.retryInitialization() },
+                            isInitialization: true
+                        )
+                    }
+                }
             } else {
-                errorMessage = "Failed to initialize CutClip. Please restart the app."
+                // For other errors, use NetworkMonitor's diagnosis
+                let diagnosis = networkMonitor.diagnoseNetworkError(error)
+                
+                switch diagnosis {
+                case .noInternetConnection, .serverUnreachable, .serverTimeout, .connectionLost:
+                    hasNetworkError = true
+                    if let handler = errorHandler {
+                        await MainActor.run { [weak self] in
+                            handler.showError(
+                                AppError.network(diagnosis.userMessage),
+                                retryAction: { self?.retryInitialization() },
+                                isInitialization: true
+                            )
+                        }
+                    }
+                case .serverError(let message):
+                    hasNetworkError = true
+                    if let handler = errorHandler {
+                        await MainActor.run { [weak self] in
+                            handler.showError(
+                                AppError.network("Server error: \(message)"),
+                                retryAction: { self?.retryInitialization() },
+                                isInitialization: true
+                            )
+                        }
+                    }
+                case .unknownError(_):
+                    self.errorMessage = "Failed to initialize CutClip. Please restart the app."
+                }
             }
 
-            // Set fallback state to allow app to function with limited features
+            // Set fallback state
             licenseStatus = .unknown
-            needsLicenseSetup = true
-
-            // For critical network errors, don't allow app to proceed normally
-            if error is URLError || (error as? UsageError)?.localizedDescription.contains("network") == true {
-                print("🚨 Critical network error during initialization - app functionality will be limited")
+            
+            // Only require license setup if it's not a network error
+            if !hasNetworkError {
+                needsLicenseSetup = true
+                errorMessage = "Failed to initialize CutClip. Please restart the app."
+            } else {
+                // For network errors, try to allow app to function with cached data
+                needsLicenseSetup = false
+                print("🚨 Network error during initialization - attempting to use cached data")
             }
         }
     }

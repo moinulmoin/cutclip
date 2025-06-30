@@ -122,15 +122,35 @@ struct CleanPickerField<T: Hashable>: View {
         VStack(alignment: .leading, spacing: CleanDS.Spacing.xs) {
             CleanLabel(text: label)
             
-            Picker(label, selection: $selection) {
-                ForEach(options, id: \.self) { option in
-                    Text(displayText(option)).tag(option)
+            // Use a ZStack to overlay picker on TextField-styled container
+            ZStack {
+                // TextField-styled background
+                HStack {
+                    Text(displayText(selection))
+                        .font(CleanDS.Typography.body)
+                        .foregroundColor(CleanDS.Colors.textPrimary)
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9))
+                        .foregroundColor(CleanDS.Colors.textSecondary)
                 }
+                .cleanInput() // Use the exact same modifier as TextField!
+                
+                // Invisible picker overlay
+                Picker("", selection: $selection) {
+                    ForEach(options, id: \.self) { option in
+                        Text(displayText(option)).tag(option)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .opacity(0.05) // Almost invisible but still interactive
+                .allowsHitTesting(true)
             }
-            .pickerStyle(.menu)
             .disabled(isDisabled)
-            .frame(height: 32)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(isDisabled ? 0.6 : 1.0)
         }
     }
 }

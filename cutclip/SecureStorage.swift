@@ -144,17 +144,17 @@ class SecureStorage {
     func hasDeviceRegistration() -> Bool {
         return retrieveDeviceRegistration() != nil
     }
-    
+
     // MARK: - Migration
-    
+
     /// Cleans up old keychain items from previous service names
     func cleanupLegacyKeychainItems() {
         let legacyServiceNames = ["com.cutclip.license"]
-        
+
         for legacyService in legacyServiceNames {
             // Skip if it's the current service name
             if legacyService == serviceName { continue }
-            
+
             // Delete license items
             let licenseQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
@@ -167,7 +167,7 @@ class SecureStorage {
             } else if licenseStatus != errSecItemNotFound {
                 print("⚠️ Failed to delete legacy license: \(licenseStatus)")
             }
-            
+
             // Delete device registration items
             let deviceQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,

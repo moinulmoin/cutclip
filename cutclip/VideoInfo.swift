@@ -38,6 +38,14 @@ struct VideoInfo: Sendable, Codable {
         !availableCaptions.isEmpty
     }
     
+    var highestAvailableQuality: String? {
+        guard let actualBest = actualBestHeight, actualBest > 0 else { return nil }
+        return "\(actualBest)p"
+    }
+    
+    // Store the actual best height from yt-dlp
+    var actualBestHeight: Int?
+    
     var qualityOptions: [String] {
         let qualities = availableFormats
             .compactMap { format -> String? in

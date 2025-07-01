@@ -49,13 +49,13 @@ class VideoInfoService: ObservableObject, Sendable {
     func loadVideoInfo(for urlString: String) async throws -> VideoInfo {
         // Retry logic for first-run issues
         var lastError: Error?
-        
+
         for attempt in 1...3 {
             do {
                 return try await loadVideoInfoAttempt(for: urlString)
             } catch let error as VideoInfoError {
                 lastError = error
-                
+
                 // Only retry on parsing failures (which might be first-run issues)
                 if case .parsingFailed(_) = error, attempt < 3 {
                     print("⚠️ VideoInfo attempt \(attempt) failed with parsing error, retrying...")
@@ -68,10 +68,10 @@ class VideoInfoService: ObservableObject, Sendable {
                 throw error
             }
         }
-        
+
         throw lastError ?? VideoInfoError.parsingFailed("Failed after 3 attempts")
     }
-    
+
     private func loadVideoInfoAttempt(for urlString: String) async throws -> VideoInfo {
         // Trust that AutoSetup has verified yt-dlp is functional
         // If we reached ClipperView, binaries should be ready
@@ -98,10 +98,11 @@ class VideoInfoService: ObservableObject, Sendable {
             process.executableURL = URL(fileURLWithPath: ytDlpPath)
             // Use --print with output template syntax
             // Using numeric defaults for numeric fields to ensure valid JSON
+            // formats.-1 gets the best format (last in array), height gets the video height
             let printFormat = """
-            {"id":"%(id)s","title":"%(title)s","duration":%(duration|0)s,"thumbnail":"%(thumbnail|)s","uploader":"%(uploader|)s","upload_date":"%(upload_date|)s","view_count":%(view_count|0)s}
+            {"id":"%(id)s","title":"%(title)s","duration":%(duration|0)s,"thumbnail":"%(thumbnail|)s","uploader":"%(uploader|)s","upload_date":"%(upload_date|)s","view_count":%(view_count|0)s,"best_height":%(formats.-1.height|0)s}
             """
-            
+
             process.arguments = [
                 "--print", printFormat.trimmingCharacters(in: .whitespacesAndNewlines),
                 "--no-playlist",
@@ -134,7 +135,7 @@ class VideoInfoService: ObservableObject, Sendable {
                     }
                 }
             }
-            
+
             errorPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if !data.isEmpty {
@@ -149,10 +150,10 @@ class VideoInfoService: ObservableObject, Sendable {
                     // Ensure we read any remaining data
                     outputPipe.fileHandleForReading.readabilityHandler = nil
                     errorPipe.fileHandleForReading.readabilityHandler = nil
-                    
+
                     // Small delay to ensure all data is flushed
                     try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
-                    
+
                     // Read any remaining data from both pipes
                     if let tailData = try? outputPipe.fileHandleForReading.readToEnd(), !tailData.isEmpty {
                         await outputBuffer.appendData(tailData)
@@ -171,15 +172,15 @@ class VideoInfoService: ObservableObject, Sendable {
                         if process.terminationStatus == 0 {
                             // Success - parse the JSON output
                             let outputData = await outputBuffer.outputData
-                            
+
                             // Debug logging
                             print("📊 Output data size: \(outputData.count) bytes")
-                            
+
                             // The output should be clean JSON from --print
                             if let outputString = String(data: outputData, encoding: .utf8) {
                                 print("📊 Video info output: \(outputString)")
                             }
-                            
+
                             do {
                                 let videoInfo = try await self.parseVideoInfo(from: outputData)
                                 await MainActor.run {
@@ -194,12 +195,12 @@ class VideoInfoService: ObservableObject, Sendable {
                             // Error - process failed
                             let errorData = await errorBuffer.outputData
                             let outputData = await outputBuffer.outputData
-                            
+
                             // Try error stream first, then output stream
-                            let errorOutput = String(data: errorData, encoding: .utf8) ?? 
-                                             String(data: outputData, encoding: .utf8) ?? 
+                            let errorOutput = String(data: errorData, encoding: .utf8) ??
+                                             String(data: outputData, encoding: .utf8) ??
                                              "Unknown error"
-                            
+
                             let error = self.parseYtDlpError(from: errorOutput)
                             continuation.resume(throwing: error)
                         }
@@ -240,19 +241,19 @@ class VideoInfoService: ObservableObject, Sendable {
             let uploader: String
             let upload_date: String
             let view_count: Int
+            let best_height: Int
         }
-        
+
         let decoder = JSONDecoder()
-        
+
         do {
             let minimalInfo = try decoder.decode(MinimalVideoInfo.self, from: data)
-            
+
             // Create default formats for common YouTube qualities
-            // This allows the UI to show quality options without fetching full format list
             let defaultFormats = createDefaultFormats()
-            
+
             // Convert to full VideoInfo with default values for missing fields
-            return VideoInfo(
+            var videoInfo = VideoInfo(
                 id: minimalInfo.id,
                 title: minimalInfo.title,
                 description: nil,
@@ -265,6 +266,14 @@ class VideoInfoService: ObservableObject, Sendable {
                 availableCaptions: [],
                 webpageURL: "https://www.youtube.com/watch?v=\(minimalInfo.id)"
             )
+
+            // Set the actual best height from yt-dlp
+            videoInfo.actualBestHeight = minimalInfo.best_height
+
+            // Debug logging
+            print("📊 Parsed video info - Title: \(videoInfo.title), Best Height: \(minimalInfo.best_height)p")
+
+            return videoInfo
         } catch {
             print("❌ Failed to parse minimal video info: \(error)")
             throw VideoInfoError.parsingFailed("Failed to parse video information: \(error.localizedDescription)")
@@ -294,7 +303,7 @@ class VideoInfoService: ObservableObject, Sendable {
     func clearVideoInfo() {
         currentVideoInfo = nil
     }
-    
+
     // Create default video formats for common YouTube qualities
     private nonisolated func createDefaultFormats() -> [VideoFormat] {
         return [
@@ -324,7 +333,7 @@ class VideoInfoService: ObservableObject, Sendable {
             ),
             VideoFormat(
                 formatID: "135",
-                ext: "mp4", 
+                ext: "mp4",
                 height: 480,
                 width: 854,
                 fps: 30.0,

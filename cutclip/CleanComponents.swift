@@ -240,11 +240,13 @@ struct CleanVideoPreview: View {
                     }
                 }
                 
-                // Quality info
-                Text("\(videoInfo.qualityOptions.joined(separator: ", "))")
-                    .font(CleanDS.Typography.caption)
-                    .foregroundColor(CleanDS.Colors.textTertiary)
-                    .lineLimit(1)
+                // Quality info - Show only highest available
+                if let highestQuality = videoInfo.highestAvailableQuality {
+                    Text("Up to \(highestQuality)")
+                        .font(CleanDS.Typography.caption)
+                        .foregroundColor(CleanDS.Colors.textTertiary)
+                        .lineLimit(1)
+                }
             }
             
             Spacer()

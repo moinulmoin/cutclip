@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct DisclaimerView: View {
-    @AppStorage("disclaimerAccepted") private var accepted = false
+    @EnvironmentObject private var coordinator: AppCoordinator
     @State private var showContent = false
 
     var body: some View {
@@ -78,7 +78,7 @@ struct DisclaimerView: View {
                     "I Understand and Accept",
                     style: .primary
                 ) {
-                    accepted = true
+                    coordinator.acceptDisclaimer()
                 }
                 .opacity(showContent ? 1.0 : 0.0)
                 .animation(CleanDS.Animation.standard.delay(0.8), value: showContent)

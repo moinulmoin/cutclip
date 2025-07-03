@@ -10,6 +10,7 @@ import Foundation
 @MainActor
 class DownloadService: ObservableObject, Sendable {
     private let binaryManager: BinaryManager
+    private let processExecutor = ProcessExecutor()
     @Published var currentJob: ClipJob?
 
     nonisolated init(binaryManager: BinaryManager) {
@@ -49,9 +50,14 @@ class DownloadService: ObservableObject, Sendable {
     }
 
     nonisolated func downloadVideo(for job: ClipJob) async throws -> String {
-        let ytDlpPath = await MainActor.run { binaryManager.ytDlpPath }
+        let (ytDlpPath, ffmpegPath) = await MainActor.run { 
+            (binaryManager.ytDlpPath, binaryManager.ffmpegPath)
+        }
         guard let ytDlpPath = ytDlpPath else {
             throw DownloadError.binaryNotFound("yt-dlp not configured")
+        }
+        guard let ffmpegPath = ffmpegPath else {
+            throw DownloadError.binaryNotFound("FFmpeg not configured")
         }
 
         guard isValidYouTubeURL(job.url) else {
@@ -67,118 +73,85 @@ class DownloadService: ObservableObject, Sendable {
         // Allow yt-dlp to choose the right container by expanding %(ext)s
         let outputTemplate = tempDir.appendingPathComponent("\(uniqueBaseName).%(ext)s").path
 
-        // Use an actor to manage state instead of captured variables
-        let stateManager = ProcessStateManager()
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: ytDlpPath)
-
-            // Always download the best available quality with video+audio
-            // The quality parameter will be used for OUTPUT scaling in ClipService
-            let formatString = "best[ext=mp4]/best[ext=webm]/best"
-
-            process.arguments = [
+        // Build yt-dlp format expression from desired quality
+        let formatString: String
+        if job.quality.lowercased() == "best" {
+            formatString = "bestvideo+bestaudio/best"
+        } else if let h = Int(job.quality.lowercased().replacingOccurrences(of: "p", with: "")) {
+            formatString = "bestvideo[height<=\(h)]+bestaudio[ext=m4a]/bestvideo[height<=\(h)]+bestaudio/best[height<=\(h)]/best"
+        } else {
+            formatString = "bestvideo[height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
+        }
+        
+        print("🎬 yt-dlp format string: \(formatString)")
+        print("🎬 Quality requested: \(job.quality)")
+        print("🎬 URL: \(job.url)")
+        
+        let config = ProcessConfiguration(
+            executablePath: ytDlpPath,
+            arguments: [
                 "--format", formatString,
+                "--ffmpeg-location", ffmpegPath,  // Tell yt-dlp where FFmpeg is
                 "--output", outputTemplate,
                 "--no-playlist",
                 "--newline",  // Output progress on new lines
                 "--progress",  // Show progress
                 job.url
-            ]
-            
-            print("🎬 yt-dlp format string: \(formatString)")
-            print("🎬 Quality requested: \(job.quality)")
-
-            let pipe = Pipe()
-            process.standardError = pipe
-            process.standardOutput = pipe
-            
-            // Security: Set restrictive environment
-            process.environment = [
+            ],
+            environment: [
                 "PATH": "/usr/bin:/bin",
                 "HOME": NSTemporaryDirectory()
-            ]
-
-            // Use thread-safe actor for download tracking
-            let errorBuffer = ErrorBuffer()
-
-            pipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                if !data.isEmpty {
-                    Task {
-                        await errorBuffer.appendData(data)
-                        let output = String(data: data, encoding: .utf8) ?? ""
-
-                        // Parse progress from yt-dlp output
-                        if let progress = parseProgress(from: output) {
-                            await MainActor.run {
-                                self.updateJobProgress(progress)
-                            }
-                        }
+            ],
+            timeout: 900, // 15 minutes
+            outputHandler: { [weak self] output in
+                // Parse progress from yt-dlp output
+                if let progress = parseProgress(from: output) {
+                    Task { @MainActor in
+                        self?.updateJobProgress(progress)
                     }
                 }
-            }
-
-            process.terminationHandler = { process in
-                Task {
-                    defer {
-                        // Schedule cleanup after a longer delay to prevent file deletion during use
-                        Task {
-                            try? await Task.sleep(nanoseconds: 300_000_000_000) // 5 minutes
-                            self.cleanupTempDirectory(tempDir)
-                        }
-                    }
-
-                    let didResume = await stateManager.markResumedAndCleanup {
-                        pipe.fileHandleForReading.readabilityHandler = nil
-                        if process.isRunning {
-                            process.terminate()
-                        }
-                    }
-
-                    if !didResume {
-                        if process.terminationStatus == 0 {
-                            // Search for the file yt-dlp actually created (any extension)
-                            if let finalURL = try? FileManager.default
-                                .contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
-                                .first(where: { $0.lastPathComponent.hasPrefix(uniqueBaseName) }) {
-
-                                continuation.resume(returning: finalURL.path)
-                            } else {
-                                // Rare, but critical if it happens
-                                let outputData = await errorBuffer.outputData
-                                let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error, file not created."
-                                print("❌ yt-dlp claimed success, but no file with prefix \(uniqueBaseName) was found in \(tempDir.path)")
-                                continuation.resume(throwing: DownloadError.downloadFailed(errorOutput))
-                            }
-                        } else {
-                            let outputData = await errorBuffer.outputData
-                            let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error"
-                            continuation.resume(throwing: DownloadError.downloadFailed(errorOutput))
-                        }
-                    }
-                }
-            }
-
-            // Add timeout to prevent hanging downloads (15 minutes max)
+            },
+            combinedOutput: true  // Use single pipe for stdout and stderr like original
+        )
+        
+        defer {
+            // Schedule cleanup after a longer delay to prevent file deletion during use
             Task {
-                try? await Task.sleep(nanoseconds: 900_000_000_000) // 15 minutes
-                let didResume = await stateManager.markResumedAndCleanup {
-                    pipe.fileHandleForReading.readabilityHandler = nil
-                    if process.isRunning {
-                        process.terminate()
-                    }
-                }
-                if !didResume {
-                    continuation.resume(throwing: DownloadError.downloadFailed("Download timed out after 15 minutes"))
-                }
+                try? await Task.sleep(nanoseconds: 300_000_000_000) // 5 minutes
+                self.cleanupTempDirectory(tempDir)
             }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: DownloadError.processError(error.localizedDescription))
+        }
+        
+        do {
+            let result = try await processExecutor.execute(config)
+            
+            if result.isSuccess {
+                // Search for the file yt-dlp actually created (any extension)
+                if let finalURL = try? FileManager.default
+                    .contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
+                    .first(where: { $0.lastPathComponent.hasPrefix(uniqueBaseName) }) {
+                    
+                    return finalURL.path
+                } else {
+                    // Rare, but critical if it happens
+                    let errorOutput = result.errorString ?? result.outputString ?? "Unknown error, file not created."
+                    print("❌ yt-dlp claimed success, but no file with prefix \(uniqueBaseName) was found in \(tempDir.path)")
+                    throw DownloadError.downloadFailed(errorOutput)
+                }
+            } else {
+                let errorOutput = result.errorString ?? result.outputString ?? "Unknown error"
+                print("❌ yt-dlp failed with exit code: \(result.exitCode)")
+                print("❌ yt-dlp error output: \(errorOutput)")
+                throw DownloadError.downloadFailed(errorOutput)
+            }
+        } catch let error as ProcessExecutorError {
+            switch error {
+            case .timeout:
+                throw DownloadError.downloadFailed("Download timed out after 15 minutes")
+            case .launchFailed(let message):
+                throw DownloadError.processError(message)
+            case .executionFailed(_, let errorMessage):
+                throw DownloadError.downloadFailed(errorMessage ?? "Unknown error")
             }
         }
     }
@@ -243,30 +216,43 @@ class DownloadService: ObservableObject, Sendable {
     }
 }
 
-// Thread-safe actor for buffering error output
-private actor ErrorBuffer {
-    private(set) var outputData = Data()
-
-    func appendData(_ data: Data) {
-        outputData.append(data)
-    }
-}
-
-// Thread-safe actor for process state management
-private actor ProcessStateManager {
-    private var hasResumed = false
-
-    func markResumedAndCleanup(_ cleanup: () -> Void) -> Bool {
-        if hasResumed {
-            return true
-        }
-        hasResumed = true
-        cleanup()
-        return false
-    }
-}
-
 // Global functions for parsing (nonisolated)
+private nonisolated func parseYtDlpError(_ error: String) -> String {
+    // Common yt-dlp error patterns and user-friendly messages
+    if error.contains("Sign in to confirm your age") || error.contains("age-restricted") {
+        return "This video is age-restricted. YouTube requires sign-in which is not supported."
+    } else if error.contains("Private video") {
+        return "This video is private and cannot be downloaded."
+    } else if error.contains("Video unavailable") {
+        return "This video is unavailable or has been removed."
+    } else if error.contains("members-only") {
+        return "This video is for members only and cannot be downloaded."
+    } else if error.contains("geo-restricted") || error.contains("not available in your country") {
+        return "This video is not available in your region."
+    } else if error.contains("copyright") {
+        return "This video has been blocked due to copyright."
+    } else if error.contains("HTTP Error 403") {
+        return "Access denied. The video may be restricted or removed."
+    } else if error.contains("HTTP Error 404") {
+        return "Video not found. Please check the URL."
+    } else if error.contains("No video formats found") {
+        return "No downloadable video formats found. The video may be restricted."
+    } else if error.contains("ERROR:") {
+        // Extract just the error message after ERROR:
+        if let errorStart = error.range(of: "ERROR:") {
+            let errorMsg = String(error[errorStart.upperBound...]).trimmingCharacters(in: .whitespaces)
+            // Remove YouTube URL if present for cleaner message
+            if let urlStart = errorMsg.range(of: "https://") {
+                return String(errorMsg[..<urlStart.lowerBound]).trimmingCharacters(in: .whitespaces)
+            }
+            return errorMsg
+        }
+    }
+    
+    // Return original error if no pattern matches
+    return error
+}
+
 private nonisolated func parseProgress(from output: String) -> Double? {
     // Look for progress patterns like "[download] 25.5% of 15.30MiB"
     let progressPattern = #"\[download\]\s+(\d+\.?\d*)%"#
@@ -293,39 +279,38 @@ enum DownloadError: LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .binaryNotFound(_):
-            return "Setup required. Please configure required tools in Settings."
+        case .binaryNotFound(let message):
+            return "Setup required: \(message)"
         case .invalidURL:
             return "Invalid YouTube URL. Please check the link and try again."
-        case .downloadFailed(_):
-            return "Video download failed. This video may be restricted."
-        case .processError(_):
-            return "Video download failed. This video may be restricted."
+        case .downloadFailed(let details):
+            // Parse yt-dlp error for user-friendly message
+            let userFriendlyError = parseYtDlpError(details)
+            return userFriendlyError
+        case .processError(let message):
+            return "Process error: \(message)"
         case .fileNotFound:
-            return "Video download failed. This video may be restricted."
-        case .networkError(_):
-            return "No internet connection. CutClip requires internet."
-        case .diskSpaceError(_):
-            return "Unable to download video. Please check your disk space."
+            return "Downloaded file not found. Please try again."
+        case .networkError(let message):
+            return "Network error: \(message)"
+        case .diskSpaceError(let message):
+            return "Disk space error: \(message)"
         }
     }
 
     func toAppError() -> AppError {
         switch self {
-        case .binaryNotFound(_):
-            return .binaryNotFound("Setup required. Please configure required tools in Settings.")
+        case .binaryNotFound(let message):
+            return .binaryNotFound(message)
         case .invalidURL:
-            return .invalidInput("Invalid YouTube URL. Please check the link and try again.")
-        case .downloadFailed(_):
-            return .downloadFailed("Video download failed. This video may be restricted.")
-        case .processError(_):
-            return .downloadFailed("Video download failed. This video may be restricted.")
-        case .fileNotFound:
-            return .downloadFailed("Video download failed. This video may be restricted.")
-        case .networkError(_):
-            return .network("No internet connection. CutClip requires internet.")
-        case .diskSpaceError(_):
-            return .diskSpace("Unable to download video. Please check your disk space.")
+            return .invalidInput(self.errorDescription ?? "Invalid URL")
+        case .downloadFailed(_), .processError(_), .fileNotFound:
+            // Use the actual error description which now includes details
+            return .downloadFailed(self.errorDescription ?? "Download failed")
+        case .networkError(let message):
+            return .network(message)
+        case .diskSpaceError(let message):
+            return .diskSpace(message)
         }
     }
 }

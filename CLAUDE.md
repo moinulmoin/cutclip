@@ -58,17 +58,15 @@ The app follows a strict onboarding sequence managed by `ContentView`:
 
 ### Core Services Architecture
 
-**Singleton Pattern**: All major services use `shared` singletons with `@MainActor` for thread safety.
+The app follows a clean architecture with services decomposed by responsibility:
 
-**BinaryManager**: Manages yt-dlp and FFmpeg binaries in `~/Library/Application Support/CutClip/bin/`. Auto-detects existing installations and handles path management.
+**State Management**: `AppCoordinator` manages app flow transitions and provides unified environment object injection.
 
-**LicenseManager**: Central license and usage coordinator. It's the UI's source of truth for all license and credit-related state. It orchestrates `UsageTracker` to perform backend operations.
+**License & Usage**: `LicenseManager` and `UsageTracker` coordinate license validation and API communication, delegating to specialized services for caching, networking, and state management.
 
-**UsageTracker**: The sole service responsible for all backend API communication. It handles device status checks, license validation, and credit management with built-in caching and retry logic.
+**Video Processing**: `ClipService` orchestrates the clipping pipeline, coordinating binary management, video downloads, and FFmpeg processing.
 
-**ClipService**: Orchestrates video clipping by coordinating `BinaryManager` (binaries), `DownloadService` (yt-dlp), and FFmpeg processing.
-
-**VideoInfoService**: Fetches video metadata (title, duration, thumbnail, available qualities) from YouTube URLs using yt-dlp before download. Enables quality selection and video preview.
+**Process Execution**: All external process calls go through `ProcessExecutor` for consistent async/await handling and security.
 
 ### Environment Configuration
 ```bash
@@ -99,28 +97,13 @@ The app integrates with a REST API for license management and usage tracking. Ke
 - `PUT /users/decrement-free-credits` - Decrement credits after successful clip
 - `POST /validate-license` - Validate and activate license key
 
-## Key Implementation Notes & Patterns
+## Key Implementation Notes
 
-### API Calls
-All API calls are consolidated in `UsageTracker.swift` and use a robust pattern with secure networking and automatic retries.
+**API Communication**: All backend calls go through a layered architecture with automatic retry logic and error handling.
 
-```swift
-// In UsageTracker.swift
-func someApiCall() async throws -> SomeResponse {
-    // ... setup ...
-    return try await NetworkRetryHelper.retryOperation {
-        let request = APIConfiguration.createRequest(url: url)
-        let (data, response) = try await APIConfiguration.performSecureRequest(request)
-        // ... handle response and errors ...
-        return try JSONDecoder().decode(SomeResponse.self, from: data)
-    }
-}
-```
+**Process Security**: External binaries (yt-dlp, FFmpeg) run in a restricted environment for security.
 
-### Process Management
-- **Security**: External processes (`yt-dlp`, `ffmpeg`) are executed with a restricted environment (minimal `PATH`, sandboxed `HOME`) to prevent exploits.
-- **Progress Tracking**: `ffmpeg`'s `stderr` output is parsed in real-time to provide accurate, duration-based progress for clipping operations.
-- **Temporary Files**: `DownloadService` downloads videos to a temporary directory and schedules cleanup to avoid leaving artifacts.
+**Video Download**: yt-dlp requires specific format strings and FFmpeg location when running with restricted PATH. The app handles quality selection and video+audio merging automatically.
 
 ### Data Flow
 - **Device ID**: Hardware UUID → SHA256 → `UserDefaults` cache.
@@ -137,19 +120,7 @@ func someApiCall() async throws -> SomeResponse {
 
 ## File Organization
 
-**Views**: 
-- `DisclaimerView`, `AutoSetupView`, `LicenseStatusView` - Onboarding flow
-- `CleanClipperView` - Main video clipping interface with modern UI
-- `CleanDS` - Design system components (buttons, text fields, styles)
-
-**Services**: Business logic in `*Manager.swift` and `*Service.swift` files using singleton pattern.
-
-**Models**: 
-- `ClipJob.swift` - Video processing data structures with quality and aspect ratio support
-- `VideoInfo.swift` - Video metadata model
-
-**Utilities**: 
-- `DeviceIdentifier`, `SecureStorage` - Security and device management
-- `NetworkMonitor`, `ErrorHandler` - Network and error handling
-- `ValidationUtils` - Input validation
-- `NetworkRetryHelper`, `APIConfiguration` - Networking utilities
+- **Views**: UI components including onboarding flow and main clipping interface
+- **Services**: Core business logic following SOLID principles with specialized services for different responsibilities
+- **Models**: Data structures for video processing and app state
+- **Utilities**: Helper classes for security, networking, and validation

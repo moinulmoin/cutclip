@@ -15,6 +15,7 @@ class AutoSetupService: ObservableObject, Sendable {
     @Published var setupError: String?
 
     private let binDirectory: URL
+    private let processExecutor = ProcessExecutor()
 
     init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -156,20 +157,14 @@ class AutoSetupService: ObservableObject, Sendable {
 
     nonisolated private func extractFFmpeg() async throws {
         let zipURL = binDirectory.appendingPathComponent("ffmpeg.zip")
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-o", zipURL.path, "-d", binDirectory.path]
+        let config = ProcessConfiguration(
+            executablePath: "/usr/bin/unzip",
+            arguments: ["-o", zipURL.path, "-d", binDirectory.path],
+            timeout: 30 // 30 seconds should be enough for extraction
+        )
         
-        // Secure process environment
-        process.environment = [
-            "PATH": "/usr/bin:/bin",
-            "HOME": NSTemporaryDirectory()
-        ]
-
-        try process.run()
-        process.waitUntilExit()
-
-        if process.terminationStatus != 0 {
+        let success = try await processExecutor.executeSimple(config)
+        if !success {
             throw SetupError.extractionFailed("Failed to extract FFmpeg")
         }
 
@@ -214,26 +209,17 @@ class AutoSetupService: ObservableObject, Sendable {
     }
 
     nonisolated private func testBinary(path: String, args: [String]) async -> Bool {
-        return await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = args
-            
-            // Secure process environment
-            process.environment = [
-                "PATH": "/usr/bin:/bin",
-                "HOME": NSTemporaryDirectory()
-            ]
-
-            process.terminationHandler = { process in
-                continuation.resume(returning: process.terminationStatus == 0)
-            }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(returning: false)
-            }
+        let config = ProcessConfiguration(
+            executablePath: path,
+            arguments: args,
+            timeout: 10 // 10 seconds for binary test
+        )
+        
+        do {
+            let success = try await processExecutor.executeSimple(config)
+            return success
+        } catch {
+            return false
         }
     }
 

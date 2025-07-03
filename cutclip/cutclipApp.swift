@@ -22,7 +22,7 @@ struct cutclipApp: App {
                     LicenseManager.shared.initializeLicenseSystem()
                 }
         }
-        .defaultSize(width: DesignSystem.Layout.defaultWindowWidth, height: DesignSystem.Layout.defaultWindowHeight)
+        .defaultSize(width: 500, height: 450)
         .windowResizability(.contentMinSize)
         .defaultPosition(UnitPoint.center)
     }

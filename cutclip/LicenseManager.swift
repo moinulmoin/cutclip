@@ -25,7 +25,20 @@ class LicenseManager: ObservableObject {
     private let secureStorage = SecureStorage.shared
     private let usageTracker = UsageTracker.shared
     private let networkMonitor = NetworkMonitor.shared
-    weak var errorHandler: ErrorHandler?
+    weak var errorHandler: ErrorHandler? {
+        didSet {
+            licenseErrorHandler.errorHandler = errorHandler
+        }
+    }
+    
+    // Error handling service
+    private let licenseErrorHandler: LicenseErrorHandler
+    
+    // State management service
+    private let licenseStateManager: LicenseStateManager
+    
+    // Analytics service
+    private let licenseAnalyticsService: LicenseAnalyticsService
 
     // Task management
     private var initializationTask: Task<Void, Never>?
@@ -34,6 +47,47 @@ class LicenseManager: ObservableObject {
     private init() {
         // No automatic initialization - prevents race condition
         // Initialization will be handled by cutclipApp.onAppear
+        
+        // Initialize error handler
+        self.licenseErrorHandler = LicenseErrorHandler(
+            networkMonitor: networkMonitor,
+            errorHandler: nil // Will be set later when errorHandler is assigned
+        )
+        
+        // Initialize state manager
+        self.licenseStateManager = LicenseStateManager(
+            secureStorage: secureStorage,
+            usageTracker: usageTracker
+        )
+        
+        // Initialize analytics service
+        self.licenseAnalyticsService = LicenseAnalyticsService(
+            deviceIdentifier: deviceIdentifier,
+            secureStorage: secureStorage,
+            usageTracker: usageTracker
+        )
+        
+        // Set up error handler callbacks
+        licenseErrorHandler.onNetworkError = { [weak self] hasError in
+            self?.hasNetworkError = hasError
+        }
+        
+        licenseErrorHandler.onErrorMessage = { [weak self] message in
+            self?.errorMessage = message
+        }
+        
+        licenseErrorHandler.onRetryAction = { [weak self] in
+            self?.retryInitialization()
+        }
+        
+        // Set up state manager callbacks
+        licenseStateManager.onLicenseStatusChange = { [weak self] status in
+            self?.licenseStatus = status
+        }
+        
+        licenseStateManager.onNeedsSetupChange = { [weak self] needsSetup in
+            self?.needsLicenseSetup = needsSetup
+        }
     }
 
     // MARK: - Initialization
@@ -84,87 +138,21 @@ class LicenseManager: ObservableObject {
             await refreshLicenseStatus()
 
             // 3. Determine if license setup is needed
-            needsLicenseSetup = determineLicenseSetupRequired()
+            needsLicenseSetup = await licenseStateManager.determineLicenseSetupRequired(currentLicenseStatus: licenseStatus)
 
             print("🔐 License system initialized. Status: \(licenseStatus)")
 
         } catch {
-            print("❌ Failed to initialize license system: \(error)")
-
-            // Handle specific error types
-            if let usageError = error as? UsageError {
-                hasNetworkError = true
-                let errorMessage: String
-                
-                switch usageError {
-                case .networkError:
-                    // Use NetworkMonitor to check if it's device or server issue
-                    errorMessage = networkMonitor.isConnected ? 
-                        "Could not connect to CutClip servers." : 
-                        "No internet connection. Please check your network settings."
-                case .serverError(let code) where code >= 500:
-                    errorMessage = "Server temporarily unavailable. Please try again in a moment."
-                case .serverError(_):
-                    errorMessage = "Unable to connect to CutClip servers. Please check your connection."
-                case .invalidResponse, .decodingError:
-                    errorMessage = "Server communication error. Please try again later."
-                default:
-                    hasNetworkError = false
-                    self.errorMessage = "Failed to initialize CutClip. Please restart the app."
-                    return
-                }
-                
-                if let handler = errorHandler {
-                    await MainActor.run { [weak self] in
-                        handler.showError(
-                            AppError.network(errorMessage), 
-                            retryAction: { self?.retryInitialization() },
-                            isInitialization: true
-                        )
-                    }
-                }
-            } else {
-                // For other errors, use NetworkMonitor's diagnosis
-                let diagnosis = networkMonitor.diagnoseNetworkError(error)
-                
-                switch diagnosis {
-                case .noInternetConnection, .serverUnreachable, .serverTimeout, .connectionLost:
-                    hasNetworkError = true
-                    if let handler = errorHandler {
-                        await MainActor.run { [weak self] in
-                            handler.showError(
-                                AppError.network(diagnosis.userMessage),
-                                retryAction: { self?.retryInitialization() },
-                                isInitialization: true
-                            )
-                        }
-                    }
-                case .serverError(let message):
-                    hasNetworkError = true
-                    if let handler = errorHandler {
-                        await MainActor.run { [weak self] in
-                            handler.showError(
-                                AppError.network("Server error: \(message)"),
-                                retryAction: { self?.retryInitialization() },
-                                isInitialization: true
-                            )
-                        }
-                    }
-                case .unknownError(_):
-                    self.errorMessage = "Failed to initialize CutClip. Please restart the app."
-                }
-            }
-
+            // Delegate error handling to licenseErrorHandler
+            await licenseErrorHandler.handleInitializationError(error)
+            
             // Set fallback state
             licenseStatus = .unknown
             
-            // Only require license setup if it's not a network error
-            if !hasNetworkError {
-                needsLicenseSetup = true
-                errorMessage = "Failed to initialize CutClip. Please restart the app."
-            } else {
-                // For network errors, try to allow app to function with cached data
-                needsLicenseSetup = false
+            // Determine if license setup is required based on error type
+            needsLicenseSetup = licenseErrorHandler.shouldRequireLicenseSetup(hasNetworkError: hasNetworkError)
+            
+            if hasNetworkError {
                 print("🚨 Network error during initialization - attempting to use cached data")
             }
         }
@@ -182,25 +170,18 @@ class LicenseManager: ObservableObject {
             let result = try await usageTracker.validateLicense(licenseKey: licenseKey)
 
             if result.valid {
-                licenseStatus = .licensed(
-                    key: licenseKey,
-                    expiresAt: nil, // No expiration from API
-                    userEmail: nil  // No user email from API
-                )
+                licenseStatus = licenseStateManager.updateLicenseStatus(licenseKey: licenseKey, isValid: true)
                 needsLicenseSetup = false
 
                 // Force state synchronization after license change
-                await syncLicenseState()
+                licenseStatus = await licenseStateManager.syncLicenseState()
                 return true
             } else {
                 errorMessage = result.message
                 return false
             }
-        } catch let error as UsageError {
-            errorMessage = error.localizedDescription
-            return false
         } catch {
-            errorMessage = "An unexpected error occurred: \(error.localizedDescription)"
+            errorMessage = licenseErrorHandler.handleLicenseValidationError(error)
             return false
         }
     }
@@ -223,7 +204,7 @@ class LicenseManager: ObservableObject {
         print("🗑️ Cache invalidated after license deactivation")
 
         // Force state synchronization after license change
-        await syncLicenseState()
+        licenseStatus = await licenseStateManager.syncLicenseState()
 
         print("✅ License deactivated")
     }
@@ -279,16 +260,15 @@ class LicenseManager: ObservableObject {
 
                 if validationResult.valid {
                     // Update license status
-                    licenseStatus = .licensed(
-                        key: storedLicense.key,
-                        expiresAt: nil,
-                        userEmail: nil
+                    licenseStatus = licenseStateManager.updateLicenseStatus(
+                        licenseKey: storedLicense.key,
+                        isValid: true
                     )
                     // Force fresh device status check to sync credit counts
                     do {
                         _ = try await usageTracker.checkDeviceStatus(forceRefresh: true)
                         // Sync state after successful validation
-                        await syncLicenseState()
+                        licenseStatus = await licenseStateManager.syncLicenseState()
                     } catch {
                         print("⚠️ Failed to sync device status after license validation: \(error)")
                     }
@@ -313,7 +293,7 @@ class LicenseManager: ObservableObject {
         do {
             _ = try await usageTracker.checkDeviceStatus(forceRefresh: true)
             // Sync state after device status check
-            await syncLicenseState()
+            licenseStatus = await licenseStateManager.syncLicenseState()
         } catch {
             print("❌ Failed to refresh device status during license refresh: \(error)")
             // Fall back to local state
@@ -323,169 +303,28 @@ class LicenseManager: ObservableObject {
         print("🔄 State synchronized: \(licenseStatus.debugDescription)")
     }
 
-    /// Centralized state synchronization to ensure consistency
-    private func syncLicenseState() async {
-        let currentStatus = usageTracker.getUsageStatus()
-
-        // Only update license status if we don't have a valid stored license
-        guard secureStorage.retrieveLicense() == nil else {
-            // If we have a stored license, ensure status reflects this
-            if case .licensed = licenseStatus {
-                // Already correct
-                return
-            } else {
-                // Fix state mismatch
-                if let storedLicense = secureStorage.retrieveLicense() {
-                    licenseStatus = .licensed(key: storedLicense.key, expiresAt: nil, userEmail: nil)
-                }
-            }
-            return
-        }
-
-        // Sync license status with usage tracker state
-        switch currentStatus {
-        case .licensed:
-            // This shouldn't happen since we checked for stored license above
-            // But handle it gracefully
-            if let storedLicense = secureStorage.retrieveLicense() {
-                licenseStatus = .licensed(key: storedLicense.key, expiresAt: nil, userEmail: nil)
-            } else {
-                licenseStatus = .unlicensed
-            }
-        case .freeTrial(let remaining):
-            licenseStatus = .freeTrial(remaining: remaining)
-        case .trialExpired:
-            licenseStatus = .trialExpired
-        }
-
-        print("🔄 State synchronized: \(licenseStatus.debugDescription)")
-    }
-
-    private func determineLicenseSetupRequired() -> Bool {
-        // Ensure license status and usage status are synchronized
-        let hasStoredLicense = secureStorage.hasValidLicense()
-        let usageStatus = usageTracker.getUsageStatus()
-
-        // If we have a stored license but status shows unlicensed, there's a mismatch
-        if hasStoredLicense, case .licensed = licenseStatus {
-            return false
-        }
-
-        // If UsageTracker shows licensed but we don't have stored license, sync issue
-        if !hasStoredLicense, case .licensed = usageStatus {
-            // Clear the mismatch by invalidating cache
-            Task {
-                await usageTracker.invalidateCache()
-            }
-        }
-
-        // Check final usage status after any synchronization
-        switch usageStatus {
-        case .licensed:
-            return false
-        case .freeTrial(let remaining):
-            return remaining == 0  // Only require setup if no credits left
-        case .trialExpired:
-            return true
-        }
-    }
 
     // MARK: - Debug & Testing
 
     func getDebugInfo() -> [String: Any] {
-        let deviceInfo = deviceIdentifier.getDeviceInfo()
-        let usageAnalytics = usageTracker.getUsageAnalytics()
-
-        return [
-            "device_info": deviceInfo,
-            "usage_analytics": usageAnalytics,
-            "license_status": licenseStatus.debugDescription,
-            "has_stored_license": secureStorage.hasValidLicense(),
-            "has_device_registration": secureStorage.hasDeviceRegistration(),
-            "needs_license_setup": needsLicenseSetup
-        ]
+        return licenseAnalyticsService.getDebugInfo(
+            licenseStatus: licenseStatus,
+            needsLicenseSetup: needsLicenseSetup
+        )
     }
 
     func resetForTesting() {
-        print("🧪 Resetting license system for testing...")
-
-        _ = secureStorage.clearAllData()
-        // Usage is managed by the API, not locally
-        licenseStatus = .unknown
-        needsLicenseSetup = false
+        licenseAnalyticsService.resetForTesting()
+        licenseStateManager.resetLicenseStatus()
         errorMessage = nil
 
         // Re-initialize
         initializeLicenseSystem()
     }
-
-
-}
-
-// MARK: - License Status Enum
-
-enum LicenseStatus: Equatable {
-    case unknown
-    case unlicensed
-    case freeTrial(remaining: Int)
-    case trialExpired
-    case licensed(key: String, expiresAt: Date?, userEmail: String?)
-
-    var displayText: String {
-        switch self {
-        case .unknown:
-            return "Checking license..."
-        case .unlicensed:
-            return "No license"
-        case .freeTrial(let remaining):
-            return "Free trial (\(remaining) uses left)"
-        case .trialExpired:
-            return "Trial expired"
-        case .licensed(_, let expiresAt, _):
-            if let expiry = expiresAt {
-                let formatter = DateFormatter()
-                formatter.dateStyle = .medium
-                return "Licensed until \(formatter.string(from: expiry))"
-            } else {
-                return "Licensed"
-            }
-        }
+    
+    func getLicenseAnalytics() -> [String: Any] {
+        return licenseAnalyticsService.getLicenseAnalytics(licenseStatus: licenseStatus)
     }
 
-    var canUseApp: Bool {
-        switch self {
-        case .licensed:
-            return true
-        case .freeTrial(let remaining):
-            return remaining > 0
-        case .unknown, .unlicensed, .trialExpired:
-            return false
-        }
-    }
 
-    var requiresLicenseSetup: Bool {
-        switch self {
-        case .trialExpired, .unlicensed:
-            return true
-        case .freeTrial(let remaining):
-            return remaining == 0
-        case .licensed, .unknown:
-            return false
-        }
-    }
-
-    var debugDescription: String {
-        switch self {
-        case .unknown:
-            return "unknown"
-        case .unlicensed:
-            return "unlicensed"
-        case .freeTrial(let remaining):
-            return "freeTrial(\(remaining))"
-        case .trialExpired:
-            return "trialExpired"
-        case .licensed(let key, let expiresAt, let email):
-            return "licensed(key: \(key.prefix(8))..., expires: \(expiresAt?.description ?? "never"), email: \(email ?? "none"))"
-        }
-    }
 }

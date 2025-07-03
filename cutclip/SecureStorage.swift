@@ -78,9 +78,10 @@ class SecureStorage {
         return deleteData(account: deviceAccount)
     }
 
-    // MARK: - Keychain Operations
-
-    private func storeData(_ data: Data, account: String) -> Bool {
+    // MARK: - Generic Keychain Operations
+    
+    /// Store arbitrary data in keychain (public for API credentials)
+    func storeData(_ data: Data, account: String) -> Bool {
         // First, delete any existing item
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -102,7 +103,8 @@ class SecureStorage {
         return status == errSecSuccess
     }
 
-    private func retrieveData(account: String) -> Data? {
+    /// Retrieve arbitrary data from keychain (public for API credentials)
+    func retrieveData(account: String) -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -118,7 +120,8 @@ class SecureStorage {
         return result as? Data
     }
 
-    private func deleteData(account: String) -> Bool {
+    /// Delete arbitrary data from keychain (public for API credentials)
+    func deleteData(account: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,

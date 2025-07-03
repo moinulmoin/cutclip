@@ -10,6 +10,7 @@ import Foundation
 @MainActor
 class VideoInfoService: ObservableObject, Sendable {
     private let binaryManager: BinaryManager
+    private let processExecutor = ProcessExecutor()
     @Published var isLoading: Bool = false
     @Published var currentVideoInfo: VideoInfo?
 
@@ -76,157 +77,68 @@ class VideoInfoService: ObservableObject, Sendable {
         // Trust that AutoSetup has verified yt-dlp is functional
         // If we reached ClipperView, binaries should be ready
         let ytDlpPath = await MainActor.run { binaryManager.ytDlpPath }!
-
-        guard isValidYouTubeURL(urlString) else {
-            throw VideoInfoError.invalidURL
-        }
-
+        
         await MainActor.run {
             self.isLoading = true
         }
-
+        
         defer {
             Task { @MainActor in
                 self.isLoading = false
             }
         }
-
-        let stateManager = ProcessStateManager()
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: ytDlpPath)
-            // Use --print with output template syntax
-            // Using numeric defaults for numeric fields to ensure valid JSON
-            // formats.-1 gets the best format (last in array), height gets the video height
-            let printFormat = """
-            {"id":"%(id)s","title":"%(title)s","duration":%(duration|0)s,"thumbnail":"%(thumbnail|)s","uploader":"%(uploader|)s","upload_date":"%(upload_date|)s","view_count":%(view_count|0)s,"best_height":%(formats.-1.height|0)s}
-            """
-
-            process.arguments = [
+        
+        // Use --print with output template syntax
+        let printFormat = """
+        {"id":"%(id)s","title":"%(title)s","duration":%(duration|0)s,"thumbnail":"%(thumbnail|)s","uploader":"%(uploader|)s","upload_date":"%(upload_date|)s","view_count":%(view_count|0)s,"best_height":%(formats.-1.height|0)s}
+        """
+        
+        let config = ProcessConfiguration(
+            executablePath: ytDlpPath,
+            arguments: [
                 "--print", printFormat.trimmingCharacters(in: .whitespacesAndNewlines),
                 "--no-playlist",
                 "--no-warnings",
                 "--skip-download",
-                "--quiet",  // Explicitly quiet to avoid extra output
+                "--quiet",
                 urlString
-            ]
-
-            // Secure process environment - same as DownloadService
-            process.environment = [
-                "PATH": "/usr/bin:/bin",
-                "HOME": NSTemporaryDirectory()
-            ]
-
-            let outputPipe = Pipe()
-            let errorPipe = Pipe()
-            process.standardOutput = outputPipe
-            process.standardError = errorPipe
-
-            let outputBuffer = OutputBuffer()
-            let errorBuffer = OutputBuffer()
-
-            // Read from both pipes to prevent buffer overflow
-            outputPipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                if !data.isEmpty {
-                    Task {
-                        await outputBuffer.appendData(data)
-                    }
+            ],
+            timeout: 30
+        )
+        
+        do {
+            let result = try await processExecutor.execute(config)
+            
+            if result.isSuccess {
+                print("📊 Output data size: \(result.output.count) bytes")
+                
+                if let outputString = result.outputString {
+                    print("📊 Video info output: \(outputString)")
                 }
+                
+                let videoInfo = try await self.parseVideoInfo(from: result.output)
+                await MainActor.run {
+                    self.currentVideoInfo = videoInfo
+                }
+                return videoInfo
+            } else {
+                let errorOutput = result.errorString ?? result.outputString ?? "Unknown error"
+                let error = self.parseYtDlpError(from: errorOutput)
+                throw error
             }
-
-            errorPipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                if !data.isEmpty {
-                    Task {
-                        await errorBuffer.appendData(data)
-                    }
+        } catch let error as ProcessExecutorError {
+            switch error {
+            case .timeout:
+                throw VideoInfoError.timeout
+            case .launchFailed(let message):
+                throw VideoInfoError.processError(message)
+            case .executionFailed(_, let errorMessage):
+                if let errorMessage = errorMessage {
+                    let error = self.parseYtDlpError(from: errorMessage)
+                    throw error
+                } else {
+                    throw VideoInfoError.parsingFailed("Process failed with no error message")
                 }
-            }
-
-            process.terminationHandler = { process in
-                Task {
-                    // Ensure we read any remaining data
-                    outputPipe.fileHandleForReading.readabilityHandler = nil
-                    errorPipe.fileHandleForReading.readabilityHandler = nil
-
-                    // Small delay to ensure all data is flushed
-                    try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
-
-                    // Read any remaining data from both pipes
-                    if let tailData = try? outputPipe.fileHandleForReading.readToEnd(), !tailData.isEmpty {
-                        await outputBuffer.appendData(tailData)
-                    }
-                    if let errorTailData = try? errorPipe.fileHandleForReading.readToEnd(), !errorTailData.isEmpty {
-                        await errorBuffer.appendData(errorTailData)
-                    }
-
-                    let didResume = await stateManager.markResumedAndCleanup {
-                        if process.isRunning {
-                            process.terminate()
-                        }
-                    }
-
-                    if !didResume {
-                        if process.terminationStatus == 0 {
-                            // Success - parse the JSON output
-                            let outputData = await outputBuffer.outputData
-
-                            // Debug logging
-                            print("📊 Output data size: \(outputData.count) bytes")
-
-                            // The output should be clean JSON from --print
-                            if let outputString = String(data: outputData, encoding: .utf8) {
-                                print("📊 Video info output: \(outputString)")
-                            }
-
-                            do {
-                                let videoInfo = try await self.parseVideoInfo(from: outputData)
-                                await MainActor.run {
-                                    self.currentVideoInfo = videoInfo
-                                }
-                                continuation.resume(returning: videoInfo)
-                            } catch {
-                                print("❌ VideoInfo parsing failed: \(error)")
-                                continuation.resume(throwing: VideoInfoError.parsingFailed(error.localizedDescription))
-                            }
-                        } else {
-                            // Error - process failed
-                            let errorData = await errorBuffer.outputData
-                            let outputData = await outputBuffer.outputData
-
-                            // Try error stream first, then output stream
-                            let errorOutput = String(data: errorData, encoding: .utf8) ??
-                                             String(data: outputData, encoding: .utf8) ??
-                                             "Unknown error"
-
-                            let error = self.parseYtDlpError(from: errorOutput)
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                }
-            }
-
-            // Add timeout to prevent hanging
-            Task {
-                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
-                let didResume = await stateManager.markResumedAndCleanup {
-                    outputPipe.fileHandleForReading.readabilityHandler = nil
-                    errorPipe.fileHandleForReading.readabilityHandler = nil
-                    if process.isRunning {
-                        process.terminate()
-                    }
-                }
-                if !didResume {
-                    continuation.resume(throwing: VideoInfoError.timeout)
-                }
-            }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: VideoInfoError.processError(error.localizedDescription))
             }
         }
     }
@@ -356,29 +268,6 @@ class VideoInfoService: ObservableObject, Sendable {
                 quality: 360
             )
         ]
-    }
-}
-
-// Thread-safe actor for buffering output
-private actor OutputBuffer {
-    private(set) var outputData = Data()
-
-    func appendData(_ data: Data) {
-        outputData.append(data)
-    }
-}
-
-// Thread-safe actor for process state management
-private actor ProcessStateManager {
-    private var hasResumed = false
-
-    func markResumedAndCleanup(_ cleanup: @Sendable () -> Void) -> Bool {
-        if hasResumed {
-            return true
-        }
-        hasResumed = true
-        cleanup()
-        return false
     }
 }
 

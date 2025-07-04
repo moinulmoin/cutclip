@@ -13,6 +13,7 @@ final class ClipperViewModel: ObservableObject {
     
     // MARK: - Published Properties
     @Published var urlText = ""
+    @Published var urlValidationError: String? = nil
     @Published var startTime = "00:00:00"
     @Published var endTime = "00:00:10"
     @Published var selectedQuality = "720p"
@@ -55,7 +56,7 @@ final class ClipperViewModel: ObservableObject {
     }
     
     var canLoadVideoInfo: Bool {
-        !urlText.isEmpty && !isProcessing && !isLoadingVideoInfo
+        !urlText.isEmpty && !isProcessing && !isLoadingVideoInfo && urlValidationError == nil
     }
     
     var hasLoadedVideo: Bool {
@@ -103,6 +104,13 @@ final class ClipperViewModel: ObservableObject {
     
     func loadVideoInfo() {
         guard !urlText.isEmpty else { return }
+        
+        // Validate URL before attempting to load
+        guard ValidationUtils.isValidYouTubeURL(urlText) else {
+            urlValidationError = "Please enter a valid YouTube URL"
+            return
+        }
+        
         guard let service = videoInfoService else { return }
         
         // Cancel any existing loading task
@@ -148,6 +156,7 @@ final class ClipperViewModel: ObservableObject {
     
     func resetState() {
         urlText = ""
+        urlValidationError = nil
         startTime = "00:00:00"
         endTime = "00:00:10"
         selectedQuality = "720p"
@@ -182,6 +191,22 @@ final class ClipperViewModel: ObservableObject {
     
     func onURLChange() {
         clearVideoInfo()
+        validateURL()
+    }
+    
+    private func validateURL() {
+        // Clear error if URL is empty
+        guard !urlText.isEmpty else {
+            urlValidationError = nil
+            return
+        }
+        
+        // Validate YouTube URL format
+        if ValidationUtils.isValidYouTubeURL(urlText) {
+            urlValidationError = nil
+        } else {
+            urlValidationError = "Please enter a valid YouTube URL (e.g., youtube.com/watch?v=...)"
+        }
     }
     
     // MARK: - Private Methods
@@ -401,6 +426,21 @@ final class ClipperViewModel: ObservableObject {
             self.showCompletionView = true
             self.savedVideoURL = urlText
             print("🎬 Clip completed! showCompletionView: \(self.showCompletionView), path: \(outputPath)")
+        }
+    }
+    
+    func cancelProcessing() {
+        cancelAllTasks()
+        // Reset processing state
+        isProcessing = false
+        processingProgress = 0.0
+        processingMessage = "Cancelled"
+        // Show a temporary message before clearing
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            await MainActor.run {
+                self.processingMessage = "Starting..."
+            }
         }
     }
     

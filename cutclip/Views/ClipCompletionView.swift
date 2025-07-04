@@ -22,10 +22,10 @@ struct ClipCompletionView: View {
             // Success indicator
             successHeader
             
-            // Video info with clipped time
-            if let videoInfo = videoInfo {
-                videoInfoCard(videoInfo: videoInfo)
-            }
+            // Clipped time range
+            Text("Clipped: \(startTime) - \(endTime)")
+                .font(CleanDS.Typography.body)
+                .foregroundColor(CleanDS.Colors.textSecondary)
             
             // Action buttons
             actionButtons
@@ -53,38 +53,6 @@ struct ClipCompletionView: View {
     }
     
     @ViewBuilder
-    private func videoInfoCard(videoInfo: VideoInfo) -> some View {
-        HStack(spacing: CleanDS.Spacing.md) {
-            // Thumbnail
-            AsyncImage(url: URL(string: videoInfo.thumbnailURL ?? "")) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Rectangle()
-                    .fill(CleanDS.Colors.backgroundTertiary)
-            }
-            .frame(width: 60, height: 34)
-            .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.small))
-            
-            VStack(alignment: .leading, spacing: CleanDS.Spacing.xs) {
-                Text(videoInfo.title)
-                    .font(CleanDS.Typography.caption)
-                    .foregroundColor(CleanDS.Colors.textPrimary)
-                    .lineLimit(1)
-                Text("Clipped: \(startTime) - \(endTime)")
-                    .font(CleanDS.Typography.caption)
-                    .foregroundColor(CleanDS.Colors.textSecondary)
-            }
-            
-            Spacer()
-        }
-        .padding(CleanDS.Spacing.sm)
-        .background(CleanDS.Colors.backgroundSecondary)
-        .cornerRadius(CleanDS.Radius.small)
-    }
-    
-    @ViewBuilder
     private var actionButtons: some View {
         VStack(spacing: CleanDS.Spacing.sm) {
             HStack(spacing: CleanDS.Spacing.sm) {
@@ -96,9 +64,6 @@ struct ClipCompletionView: View {
                     onShowInFinder()
                 }
             }
-            
-            Divider()
-                .padding(.vertical, CleanDS.Spacing.xs)
             
             // Continue options
             HStack(spacing: CleanDS.Spacing.md) {

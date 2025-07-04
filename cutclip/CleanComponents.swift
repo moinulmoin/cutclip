@@ -14,6 +14,7 @@ struct CleanInputField: View {
     let placeholder: String
     let isDisabled: Bool
     let onTextChange: (() -> Void)?
+    let errorMessage: String?
     
     @FocusState private var isFocused: Bool
     
@@ -22,12 +23,14 @@ struct CleanInputField: View {
         text: Binding<String>,
         placeholder: String = "",
         isDisabled: Bool = false,
+        errorMessage: String? = nil,
         onTextChange: (() -> Void)? = nil
     ) {
         self.label = label
         self._text = text
         self.placeholder = placeholder
         self.isDisabled = isDisabled
+        self.errorMessage = errorMessage
         self.onTextChange = onTextChange
     }
     
@@ -40,10 +43,17 @@ struct CleanInputField: View {
                 .font(CleanDS.Typography.body)
                 .foregroundColor(CleanDS.Colors.textPrimary)
                 .disabled(isDisabled)
-                .cleanInput()
+                .cleanInput(hasError: errorMessage != nil)
                 .onChange(of: text) { _, _ in
                     onTextChange?()
                 }
+            
+            if let error = errorMessage {
+                Text(error)
+                    .font(CleanDS.Typography.caption)
+                    .foregroundColor(CleanDS.Colors.error)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
     }
 }
@@ -55,6 +65,7 @@ struct CleanInputWithAction<TrailingContent: View>: View {
     let placeholder: String
     let isDisabled: Bool
     let onTextChange: (() -> Void)?
+    let errorMessage: String?
     let trailingContent: () -> TrailingContent
     
     @FocusState private var isFocused: Bool
@@ -64,6 +75,7 @@ struct CleanInputWithAction<TrailingContent: View>: View {
         text: Binding<String>,
         placeholder: String = "",
         isDisabled: Bool = false,
+        errorMessage: String? = nil,
         onTextChange: (() -> Void)? = nil,
         @ViewBuilder trailingContent: @escaping () -> TrailingContent
     ) {
@@ -71,6 +83,7 @@ struct CleanInputWithAction<TrailingContent: View>: View {
         self._text = text
         self.placeholder = placeholder
         self.isDisabled = isDisabled
+        self.errorMessage = errorMessage
         self.onTextChange = onTextChange
         self.trailingContent = trailingContent
     }
@@ -85,12 +98,19 @@ struct CleanInputWithAction<TrailingContent: View>: View {
                     .font(CleanDS.Typography.body)
                     .foregroundColor(CleanDS.Colors.textPrimary)
                     .disabled(isDisabled)
-                    .cleanInput()
+                    .cleanInput(hasError: errorMessage != nil)
                     .onChange(of: text) { _, _ in
                         onTextChange?()
                     }
                 
                 trailingContent()
+            }
+            
+            if let error = errorMessage {
+                Text(error)
+                    .font(CleanDS.Typography.caption)
+                    .foregroundColor(CleanDS.Colors.error)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -266,9 +286,22 @@ struct CleanProgressSection: View {
     let title: String
     let message: String
     let progress: Double
+    let onCancel: (() -> Void)?
+    
+    init(
+        title: String,
+        message: String,
+        progress: Double,
+        onCancel: (() -> Void)? = nil
+    ) {
+        self.title = title
+        self.message = message
+        self.progress = progress
+        self.onCancel = onCancel
+    }
     
     var body: some View {
-        VStack(spacing: CleanDS.Spacing.sm) {
+        VStack(spacing: CleanDS.Spacing.md) {
             HStack {
                 VStack(alignment: .leading, spacing: CleanDS.Spacing.xs) {
                     Text(title)
@@ -290,6 +323,16 @@ struct CleanProgressSection: View {
             ProgressView(value: progress)
                 .progressViewStyle(LinearProgressViewStyle(tint: CleanDS.Colors.accent))
                 .frame(height: 4)
+            
+            // Prominent Cancel Button
+            if let onCancel = onCancel {
+                CleanActionButton(
+                    "Cancel",
+                    icon: "xmark.circle.fill",
+                    style: .destructive,
+                    action: onCancel
+                )
+            }
         }
         .cleanSection()
     }
@@ -304,7 +347,7 @@ struct CleanActionButton: View {
     let style: ButtonStyleType
     
     enum ButtonStyleType {
-        case primary, secondary, ghost
+        case primary, secondary, ghost, destructive
     }
     
     @State private var isHovered = false
@@ -350,6 +393,9 @@ struct CleanActionButton: View {
         .if(style == .ghost) { view in
             view.buttonStyle(CleanGhostButtonStyle())
         }
+        .if(style == .destructive) { view in
+            view.buttonStyle(CleanDestructiveButtonStyle())
+        }
     }
 }
 
@@ -369,7 +415,7 @@ struct CleanSuccessSection: View {
                     .font(.system(size: 40))
                     .foregroundColor(CleanDS.Colors.success)
                     .scaleEffect(showSuccess ? 1.0 : 0.5)
-                    .animation(CleanDS.Animation.smooth.delay(0.1), value: showSuccess)
+                    .animation(CleanDS.Animation.smooth.delay(0.05), value: showSuccess)
                 
                 VStack(spacing: CleanDS.Spacing.xs) {
                     Text("Clip Ready")
@@ -381,7 +427,7 @@ struct CleanSuccessSection: View {
                         .foregroundColor(CleanDS.Colors.textSecondary)
                 }
                 .opacity(showSuccess ? 1.0 : 0.0)
-                .animation(CleanDS.Animation.standard.delay(0.2), value: showSuccess)
+                .animation(CleanDS.Animation.standard.delay(0.1), value: showSuccess)
             }
             
             // Clean action buttons
@@ -401,7 +447,7 @@ struct CleanSuccessSection: View {
                 }
             }
             .opacity(showSuccess ? 1.0 : 0.0)
-            .animation(CleanDS.Animation.standard.delay(0.3), value: showSuccess)
+            .animation(CleanDS.Animation.standard.delay(0.15), value: showSuccess)
         }
         .cleanSection()
         .onAppear {

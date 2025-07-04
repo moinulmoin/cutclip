@@ -117,9 +117,9 @@ struct CleanDS {
     
     // MARK: - Animation
     struct Animation {
-        static let quick = SwiftUI.Animation.easeOut(duration: 0.2)
-        static let standard = SwiftUI.Animation.easeOut(duration: 0.3)
-        static let smooth = SwiftUI.Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.3)
+        static let quick = SwiftUI.Animation.easeOut(duration: 0.15)
+        static let standard = SwiftUI.Animation.easeOut(duration: 0.15)
+        static let smooth = SwiftUI.Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.15)
     }
 }
 
@@ -138,6 +138,11 @@ struct CleanSectionStyle: ViewModifier {
 /// Clean input field styling
 struct CleanInputStyle: ViewModifier {
     @FocusState private var isFocused: Bool
+    let hasError: Bool
+    
+    init(hasError: Bool = false) {
+        self.hasError = hasError
+    }
     
     func body(content: Content) -> some View {
         content
@@ -148,13 +153,14 @@ struct CleanInputStyle: ViewModifier {
             .overlay(
                 RoundedRectangle(cornerRadius: CleanDS.Radius.small)
                     .stroke(
-                        isFocused ? CleanDS.Colors.accent : CleanDS.Colors.border,
-                        lineWidth: isFocused ? 2 : 1
+                        hasError ? CleanDS.Colors.error : (isFocused ? CleanDS.Colors.accent : CleanDS.Colors.border),
+                        lineWidth: isFocused || hasError ? 2 : 1
                     )
             )
             .cornerRadius(CleanDS.Radius.small)
     }
 }
+
 
 /// Clean button styles - minimal, native
 struct CleanPrimaryButtonStyle: ButtonStyle {
@@ -211,11 +217,32 @@ struct CleanGhostButtonStyle: ButtonStyle {
     }
 }
 
+struct CleanDestructiveButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) var isEnabled
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(CleanDS.Typography.bodyMedium)
+            .foregroundColor(.white)
+            .padding(.horizontal, CleanDS.Spacing.md)
+            .padding(.vertical, CleanDS.Spacing.sm + 2)
+            .background(
+                RoundedRectangle(cornerRadius: CleanDS.Radius.small)
+                    .fill(isEnabled ? CleanDS.Colors.error : CleanDS.Colors.error.opacity(0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: CleanDS.Radius.small)
+                    .stroke(CleanDS.Colors.error.opacity(0.3), lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(CleanDS.Animation.quick, value: configuration.isPressed)
+    }
+}
+
 /// Clean window background - no heavy materials
 struct CleanWindowStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(CleanDS.Colors.backgroundPrimary)
     }
 }
@@ -245,6 +272,10 @@ extension View {
         self.modifier(CleanInputStyle())
     }
     
+    func cleanInput(hasError: Bool) -> some View {
+        self.modifier(CleanInputStyle(hasError: hasError))
+    }
+    
     func cleanPrimaryButton() -> some View {
         self.buttonStyle(CleanPrimaryButtonStyle())
     }
@@ -255,6 +286,10 @@ extension View {
     
     func cleanGhostButton() -> some View {
         self.buttonStyle(CleanGhostButtonStyle())
+    }
+    
+    func cleanDestructiveButton() -> some View {
+        self.buttonStyle(CleanDestructiveButtonStyle())
     }
     
     func cleanWindow() -> some View {

@@ -21,7 +21,7 @@ struct DisclaimerView: View {
                         .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.medium))
                         .scaleEffect(showContent ? 1.0 : 0.8)
-                        .animation(CleanDS.Animation.smooth.delay(0.1), value: showContent)
+                        .animation(CleanDS.Animation.smooth.delay(0.05), value: showContent)
                     
                     VStack(spacing: CleanDS.Spacing.xs) {
                         Text("Welcome to CutClip")
@@ -33,7 +33,7 @@ struct DisclaimerView: View {
                             .foregroundColor(CleanDS.Colors.textSecondary)
                     }
                     .opacity(showContent ? 1.0 : 0.0)
-                    .animation(CleanDS.Animation.standard.delay(0.2), value: showContent)
+                    .animation(CleanDS.Animation.standard.delay(0.1), value: showContent)
                 }
                 
                 // Clean Content
@@ -42,25 +42,25 @@ struct DisclaimerView: View {
                         .font(CleanDS.Typography.bodyMedium)
                         .foregroundColor(CleanDS.Colors.textPrimary)
                         .opacity(showContent ? 1.0 : 0.0)
-                        .animation(CleanDS.Animation.standard.delay(0.3), value: showContent)
+                        .animation(CleanDS.Animation.standard.delay(0.15), value: showContent)
 
                     VStack(spacing: CleanDS.Spacing.md) {
                         CleanDisclaimerPoint(
                             icon: "checkmark.shield.fill",
                             text: "Follow YouTube's Terms of Service",
-                            delay: 0.4
+                            delay: 0.2
                         )
                         
                         CleanDisclaimerPoint(
                             icon: "person.fill.checkmark",
                             text: "Only download content you have permission to use",
-                            delay: 0.5
+                            delay: 0.25
                         )
                         
                         CleanDisclaimerPoint(
                             icon: "heart.fill",
                             text: "Respect creators' rights and use responsibly",
-                            delay: 0.6
+                            delay: 0.3
                         )
                     }
                 }
@@ -71,7 +71,7 @@ struct DisclaimerView: View {
                     .foregroundColor(CleanDS.Colors.textSecondary)
                     .multilineTextAlignment(.center)
                     .opacity(showContent ? 1.0 : 0.0)
-                    .animation(CleanDS.Animation.standard.delay(0.7), value: showContent)
+                    .animation(CleanDS.Animation.standard.delay(0.35), value: showContent)
 
                 // Clean Accept Button
                 CleanActionButton(
@@ -81,7 +81,7 @@ struct DisclaimerView: View {
                     coordinator.acceptDisclaimer()
                 }
                 .opacity(showContent ? 1.0 : 0.0)
-                .animation(CleanDS.Animation.standard.delay(0.8), value: showContent)
+                .animation(CleanDS.Animation.standard.delay(0.4), value: showContent)
             }
         }
         .padding(CleanDS.Spacing.containerNormal)

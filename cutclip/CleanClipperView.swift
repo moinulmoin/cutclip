@@ -27,37 +27,47 @@ struct CleanClipperView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Clean Header - Full Width
+            // Sticky Minimal Header
             ClipperHeaderView(
                 licenseStatus: licenseManager.licenseStatus,
                 onShowLicense: viewModel.showLicenseView,
                 onShowSettings: viewModel.showLicenseView
             )
             
-            // Main Content - Constrained Width
             ScrollView {
+                // Main Content - Constrained Width
                 VStack(spacing: CleanDS.Spacing.sectionSpacing) {
                     // URL Input Section
                     URLInputView(
                         urlText: $viewModel.urlText,
+                        urlValidationError: viewModel.urlValidationError,
                         loadedVideoInfo: viewModel.loadedVideoInfo,
                         isProcessing: viewModel.isProcessing,
                         isLoadingVideoInfo: viewModel.isLoadingVideoInfo,
+                        canLoadVideoInfo: viewModel.canLoadVideoInfo,
                         onLoadVideoInfo: viewModel.loadVideoInfo,
-                        onClearVideoInfo: viewModel.clearVideoInfo,
+                        onClearVideoInfo: viewModel.resetState,
                         onTextChange: viewModel.onURLChange
                     )
                     
-                    // Video Preview (if loaded and not showing completion)
-                    if let videoInfo = viewModel.loadedVideoInfo, !viewModel.showCompletionView {
-                        CleanVideoPreview(videoInfo: videoInfo)
-                            .transition(.asymmetric(
-                                insertion: .opacity.combined(with: .move(edge: .top)),
-                                removal: .opacity
-                            ))
+                    // Video Preview (if loaded) - stays visible through all states
+                    if let videoInfo = viewModel.loadedVideoInfo {
+                        VStack(spacing: CleanDS.Spacing.sm) {
+                            CleanVideoPreview(videoInfo: videoInfo)
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .move(edge: .top)),
+                                    removal: .opacity
+                                ))
+                            
+                            // Change/Reset button
+                            CleanActionButton("Change", style: .secondary) {
+                                viewModel.resetState()
+                            }
+                            .disabled(viewModel.isProcessing)
+                        }
                     }
                     
-                    // Clip Settings Section
+                    // Clip Settings Section (hidden during completion)
                     if viewModel.hasLoadedVideo && !viewModel.showCompletionView {
                         ClipSettingsView(
                             startTime: $viewModel.startTime,
@@ -72,12 +82,13 @@ struct CleanClipperView: View {
                         placeholderView
                     }
                     
-                    // Progress Section (if processing and not showing completion)
+                    // Progress Section (if processing)
                     if viewModel.isProcessing && !viewModel.showCompletionView {
                         CleanProgressSection(
                             title: "Processing Video",
                             message: viewModel.processingMessage,
-                            progress: viewModel.processingProgress
+                            progress: viewModel.processingProgress,
+                            onCancel: viewModel.cancelProcessing
                         )
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .top)),

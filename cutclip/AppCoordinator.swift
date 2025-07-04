@@ -77,11 +77,15 @@ final class AppCoordinator: ObservableObject {
                     await initializeLicenseManager()
                 }
             }
+        } else if licenseManager.hasNetworkError || errorHandler.showingInitSheet {
+            // Stay in loading state when there's a network error or showing init error
+            // The error dialog will be shown as a sheet
+            setView(.loading)
         } else if licenseManager.needsLicenseSetup && !licenseManager.hasNetworkError {
             // Only show license setup if it's not due to a network error
             setView(.licenseSetup)
         } else {
-            // Show main view even with network errors
+            // Show main view only when everything is properly initialized
             setView(.main)
         }
     }
@@ -102,7 +106,7 @@ final class AppCoordinator: ObservableObject {
         // We just need to wait for it to complete
         
         // Add a small delay to ensure smooth transition
-        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        try? await Task.sleep(nanoseconds: 150_000_000) // 0.15 seconds
         
         isInitializing = false
         updateAppState()

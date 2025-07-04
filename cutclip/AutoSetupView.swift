@@ -28,10 +28,10 @@ struct AutoSetupView: View {
                         .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.medium))
                         .scaleEffect(animateIcon ? 1.0 : 0.9)
                         .rotationEffect(.degrees(animateIcon ? 3 : -3))
-                        .animation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true), value: animateIcon)
+                        .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: animateIcon)
                     .opacity(showContent ? 1.0 : 0.0)
                     .scaleEffect(showContent ? 1.0 : 0.5)
-                    .animation(.bouncy(duration: 0.8).delay(0.2), value: showContent)
+                    .animation(.bouncy(duration: 0.15).delay(0.05), value: showContent)
 
                     VStack(spacing: CleanDS.Spacing.xs) {
                         Text("Setting up CutClip")
@@ -44,7 +44,7 @@ struct AutoSetupView: View {
                     }
                     .opacity(showContent ? 1.0 : 0.0)
                     .offset(y: showContent ? 0 : 20)
-                    .animation(.easeInOut(duration: 0.6).delay(0.4), value: showContent)
+                    .animation(.easeInOut(duration: 0.15).delay(0.1), value: showContent)
                 }
             }
 
@@ -67,7 +67,7 @@ struct AutoSetupView: View {
                         .cleanPrimaryButton()
                     }
                     .opacity(showContent ? 1.0 : 0.0)
-                    .animation(.easeInOut(duration: 0.6).delay(0.6), value: showContent)
+                    .animation(.easeInOut(duration: 0.15).delay(0.15), value: showContent)
                 } else {
                     CleanSetupProgressView(
                         setupService: setupService,
@@ -188,7 +188,7 @@ struct CleanSetupCompleteView: View {
                 .font(.system(size: 40))
                 .foregroundColor(CleanDS.Colors.success)
                 .scaleEffect(showSuccess ? 1.0 : 0.8)
-                .animation(CleanDS.Animation.smooth.delay(0.1), value: showSuccess)
+                .animation(CleanDS.Animation.smooth.delay(0.05), value: showSuccess)
 
             VStack(spacing: CleanDS.Spacing.xs) {
                 Text("Setup Complete")
@@ -200,7 +200,7 @@ struct CleanSetupCompleteView: View {
                     .foregroundColor(CleanDS.Colors.textSecondary)
             }
             .opacity(showSuccess ? 1.0 : 0.0)
-            .animation(CleanDS.Animation.standard.delay(0.2), value: showSuccess)
+            .animation(CleanDS.Animation.standard.delay(0.1), value: showSuccess)
 
             CleanActionButton(
                 "Continue",
@@ -209,7 +209,7 @@ struct CleanSetupCompleteView: View {
                 onContinue()
             }
             .opacity(showSuccess ? 1.0 : 0.0)
-            .animation(CleanDS.Animation.standard.delay(0.3), value: showSuccess)
+            .animation(CleanDS.Animation.standard.delay(0.15), value: showSuccess)
         }
         .cleanSection()
         .onAppear {

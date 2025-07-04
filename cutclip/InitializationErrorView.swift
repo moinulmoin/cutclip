@@ -51,7 +51,7 @@ struct InitializationErrorView: View {
             }
         }
         .padding(CleanDS.Spacing.containerNormal)
-        .frame(width: 420)
+        .frame(minWidth: 400, idealWidth: 420, maxWidth: 500)
         .background(.regularMaterial)
         .cornerRadius(CleanDS.Radius.medium)
     }

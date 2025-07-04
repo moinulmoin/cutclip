@@ -79,6 +79,7 @@ struct ContentView: View {
                 .animation(CleanDS.Animation.smooth, value: coordinator.networkMonitor.isConnected)
             }
         }
+        .frame(minWidth: 450, maxWidth: .infinity, minHeight: 400, maxHeight: .infinity)
         .environmentAppCoordinator(coordinator)
         .errorAlert(coordinator.errorHandler)
         .onChange(of: coordinator.binaryManager.isConfigured) { 

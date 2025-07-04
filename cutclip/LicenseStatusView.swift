@@ -23,7 +23,7 @@ struct LicenseStatusView: View {
             // Clean Header - Full Width
             HStack(spacing: CleanDS.Spacing.sm) {
                 Spacer()
-                
+
                 Image("AppLogo")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -33,7 +33,7 @@ struct LicenseStatusView: View {
                 Text("CutClip")
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(CleanDS.Colors.textPrimary)
-                
+
                 Spacer()
             }
             .padding(.horizontal, CleanDS.Spacing.containerNormal)
@@ -45,7 +45,7 @@ struct LicenseStatusView: View {
                         Color.white.opacity(0.05)
                     )
             )
-            
+
             // Main Content - Constrained Width
             ScrollView {
                 VStack(spacing: CleanDS.Spacing.sectionSpacing) {
@@ -68,7 +68,7 @@ struct LicenseStatusView: View {
                             // License Input and Activation
                             VStack(spacing: CleanDS.Spacing.md) {
                                 CleanSectionHeader(title: "Activate License")
-                                
+
                                 CleanInputField(
                                     label: "License Key",
                                     text: $licenseKeyInput,
@@ -119,7 +119,8 @@ struct LicenseStatusView: View {
                     }
                 }
                 .padding(CleanDS.Spacing.containerNormal)
-                .cleanContent(maxWidth: 420)
+                .frame(minWidth: 400, idealWidth: 420, maxWidth: 500)
+                .frame(maxWidth: .infinity)
             }
         }
         .cleanWindow()
@@ -152,22 +153,22 @@ struct LicenseStatusView: View {
     private var statusDisplay: some View {
         VStack(spacing: CleanDS.Spacing.md) {
             CleanSectionHeader(title: "Current Status")
-            
+
             HStack(spacing: CleanDS.Spacing.sm) {
                 statusIcon
-                
+
                 VStack(alignment: .leading, spacing: CleanDS.Spacing.xs) {
                     Text(statusTitle)
                         .font(CleanDS.Typography.bodyMedium)
                         .foregroundColor(CleanDS.Colors.textPrimary)
-                    
+
                     Text(statusMessage)
                         .font(CleanDS.Typography.caption)
                         .foregroundColor(CleanDS.Colors.textSecondary)
                 }
-                
+
                 Spacer()
-                
+
                 if case .freeTrial(let remaining) = usageTracker.getUsageStatus() {
                     CleanStatusBadge(
                         text: "\(remaining) left",
@@ -213,7 +214,7 @@ struct LicenseStatusView: View {
         case .licensed:
             return "Unlimited video processing"
         case .freeTrial(let remaining):
-            return remaining <= 1 ? "Almost out of free uses" : "Limited free uses available"
+            return remaining <= 1 ? "Last free clip! Upgrade now" : "\(remaining) free clips"
         case .trialExpired:
             return "License required to continue"
         }
@@ -222,16 +223,21 @@ struct LicenseStatusView: View {
     @ViewBuilder
     private var actionButtons: some View {
         VStack(spacing: CleanDS.Spacing.md) {
-            CleanSectionHeader(title: "Get Pro License")
-            
+            CleanSectionHeader(title: "Get Lifetime License")
+
             VStack(spacing: CleanDS.Spacing.sm) {
-                Text("Don't have a license?")
-                    .font(CleanDS.Typography.body)
-                    .foregroundColor(CleanDS.Colors.textSecondary)
-                    .multilineTextAlignment(.center)
+                VStack(spacing: CleanDS.Spacing.xs) {
+                    Text("Create Unlimited Clips")
+                        .font(CleanDS.Typography.bodyMedium)
+                        .foregroundColor(CleanDS.Colors.textPrimary)
+                    Text("One-time purchase • No subscriptions")
+                        .font(CleanDS.Typography.caption)
+                        .foregroundColor(CleanDS.Colors.textSecondary)
+                }
+                .multilineTextAlignment(.center)
 
                 CleanActionButton(
-                    "Get Pro License - $4.99",
+                    "Get Lifetime Access - $4.99",
                     icon: "crown.fill",
                     style: .secondary
                 ) {

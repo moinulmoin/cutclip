@@ -11,28 +11,22 @@ struct ClipperHeaderView: View {
     let licenseStatus: LicenseStatus
     let onShowLicense: () -> Void
     let onShowSettings: () -> Void
-    
+
     var body: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("CutClip")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(CleanDS.Colors.textPrimary)
-                
-                Text("Create clips from YouTube videos")
-                    .font(CleanDS.Typography.caption)
-                    .foregroundColor(CleanDS.Colors.textSecondary)
-            }
-            
+            Text("CutClip")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(CleanDS.Colors.textPrimary)
+
             Spacer()
-            
+
             HStack(spacing: CleanDS.Spacing.sm) {
                 // Status indicator
                 CleanStatusIndicator(
                     licenseStatus: licenseStatus,
                     onUpgrade: onShowLicense
                 )
-                
+
                 // Settings button
                 Button(action: onShowSettings) {
                     Image(systemName: "gearshape")
@@ -42,13 +36,19 @@ struct ClipperHeaderView: View {
                 .cleanGhostButton()
             }
         }
-        .padding(.horizontal, CleanDS.Spacing.containerNormal)
-        .padding(.vertical, CleanDS.Spacing.md)
+        .padding(.horizontal, CleanDS.Spacing.md)
+        .padding(.vertical, 8)
         .background(
             CleanDS.Colors.backgroundPrimary
                 .overlay(
-                    Color.white.opacity(0.05)
+                    Color.white.opacity(0.03)
                 )
+        )
+        .overlay(
+            Rectangle()
+                .fill(Color.white.opacity(0.1))
+                .frame(height: 1),
+            alignment: .bottom
         )
     }
 }

@@ -36,18 +36,40 @@ struct URLInputView: View {
                                 .controlSize(.small)
                                 .tint(CleanDS.Colors.accent)
                         } else {
-                            Image(systemName: "arrow.down.circle")
-                                .foregroundColor(CleanDS.Colors.accent)
+                            Image(systemName: "info.circle.fill")
+                                .foregroundColor(.white)
                         }
-                        Text("Load Info")
+                        Text("Load")
+                            .foregroundColor(.white)
                     }
                 }
-                .cleanPrimaryButton()
-                .disabled(!canLoadVideoInfo)
+                .buttonStyle(LoadInfoButtonStyle(isEnabled: canLoadVideoInfo))
             }
         } else {
             // Return empty view when video is loaded
             EmptyView()
         }
+    }
+}
+
+// MARK: - Custom Button Style
+
+private struct LoadInfoButtonStyle: ButtonStyle {
+    let isEnabled: Bool
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(CleanDS.Typography.bodyMedium)
+            .padding(.horizontal, CleanDS.Spacing.md)
+            .padding(.vertical, CleanDS.Spacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: CleanDS.Radius.small)
+                    .fill(CleanDS.Colors.accent)
+            )
+            .scaleEffect(configuration.isPressed && isEnabled ? 0.98 : 1.0)
+            .opacity(configuration.isPressed && isEnabled ? 0.9 : 1.0)
+            .animation(CleanDS.Animation.quick, value: configuration.isPressed)
+            .allowsHitTesting(isEnabled)
+            .opacity(isEnabled ? 1.0 : 0.7)
     }
 }

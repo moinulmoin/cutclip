@@ -52,19 +52,15 @@ struct CleanClipperView: View {
                     
                     // Video Preview (if loaded) - stays visible through all states
                     if let videoInfo = viewModel.loadedVideoInfo {
-                        VStack(spacing: CleanDS.Spacing.sm) {
-                            CleanVideoPreview(videoInfo: videoInfo)
-                                .transition(.asymmetric(
-                                    insertion: .opacity.combined(with: .move(edge: .top)),
-                                    removal: .opacity
-                                ))
-                            
-                            // Change/Reset button
-                            CleanActionButton("Change", style: .secondary) {
-                                viewModel.resetState()
-                            }
-                            .disabled(viewModel.isProcessing)
-                        }
+                        CleanVideoPreview(
+                            videoInfo: videoInfo,
+                            onChangeVideo: viewModel.resetState,
+                            isChangeDisabled: viewModel.isProcessing
+                        )
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .top)),
+                            removal: .opacity
+                        ))
                     }
                     
                     // Clip Settings Section (hidden during completion)

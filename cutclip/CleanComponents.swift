@@ -213,65 +213,87 @@ extension CleanPickerField where T == ClipJob.AspectRatio {
 // MARK: - Clean Video Preview
 struct CleanVideoPreview: View {
     let videoInfo: VideoInfo
+    let onChangeVideo: (() -> Void)?
+    let isChangeDisabled: Bool
+    
+    init(videoInfo: VideoInfo, onChangeVideo: (() -> Void)? = nil, isChangeDisabled: Bool = false) {
+        self.videoInfo = videoInfo
+        self.onChangeVideo = onChangeVideo
+        self.isChangeDisabled = isChangeDisabled
+    }
     
     var body: some View {
-        HStack(spacing: CleanDS.Spacing.md) {
-            // Clean thumbnail
-            AsyncImage(url: URL(string: videoInfo.thumbnailURL ?? "")) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Rectangle()
-                    .fill(CleanDS.Colors.backgroundTertiary)
-                    .overlay(
-                        Image(systemName: "play.rectangle")
-                            .font(CleanDS.Typography.title)
-                            .foregroundColor(CleanDS.Colors.textTertiary)
-                    )
-            }
-            .frame(width: 100, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.small))
-            .overlay(
-                RoundedRectangle(cornerRadius: CleanDS.Radius.small)
-                    .stroke(CleanDS.Colors.borderLight, lineWidth: 1)
-            )
-            
-            // Clean video details
-            VStack(alignment: .leading, spacing: CleanDS.Spacing.xs) {
-                Text(videoInfo.title)
-                    .font(CleanDS.Typography.bodyMedium)
-                    .foregroundColor(CleanDS.Colors.textPrimary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+        VStack(spacing: 0) {
+            HStack(spacing: CleanDS.Spacing.md) {
+                // Clean thumbnail
+                AsyncImage(url: URL(string: videoInfo.thumbnailURL ?? "")) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Rectangle()
+                        .fill(CleanDS.Colors.backgroundTertiary)
+                        .overlay(
+                            Image(systemName: "play.rectangle")
+                                .font(CleanDS.Typography.title)
+                                .foregroundColor(CleanDS.Colors.textTertiary)
+                        )
+                }
+                .frame(width: 100, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: CleanDS.Radius.small))
+                .overlay(
+                    RoundedRectangle(cornerRadius: CleanDS.Radius.small)
+                        .stroke(CleanDS.Colors.borderLight, lineWidth: 1)
+                )
                 
-                HStack(spacing: CleanDS.Spacing.md) {
-                    // Duration
-                    Label(videoInfo.durationFormatted, systemImage: "clock")
-                        .font(CleanDS.Typography.caption)
-                        .foregroundColor(CleanDS.Colors.textSecondary)
+                // Clean video details
+                VStack(alignment: .leading, spacing: CleanDS.Spacing.xs) {
+                    Text(videoInfo.title)
+                        .font(CleanDS.Typography.bodyMedium)
+                        .foregroundColor(CleanDS.Colors.textPrimary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
                     
-                    // Channel
-                    if let channelName = videoInfo.channelName {
-                        Label(channelName, systemImage: "person.circle")
+                    HStack(spacing: CleanDS.Spacing.md) {
+                        // Duration
+                        Label(videoInfo.durationFormatted, systemImage: "clock")
                             .font(CleanDS.Typography.caption)
                             .foregroundColor(CleanDS.Colors.textSecondary)
+                        
+                        // Channel
+                        if let channelName = videoInfo.channelName {
+                            Label(channelName, systemImage: "person.circle")
+                                .font(CleanDS.Typography.caption)
+                                .foregroundColor(CleanDS.Colors.textSecondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    
+                    // Quality info - Show only highest available
+                    if let highestQuality = videoInfo.highestAvailableQuality {
+                        Text("Up to \(highestQuality)")
+                            .font(CleanDS.Typography.caption)
+                            .foregroundColor(CleanDS.Colors.textTertiary)
                             .lineLimit(1)
                     }
                 }
                 
-                // Quality info - Show only highest available
-                if let highestQuality = videoInfo.highestAvailableQuality {
-                    Text("Up to \(highestQuality)")
-                        .font(CleanDS.Typography.caption)
-                        .foregroundColor(CleanDS.Colors.textTertiary)
-                        .lineLimit(1)
-                }
+                Spacer()
             }
+            .padding(CleanDS.Spacing.md)
             
-            Spacer()
+            // Change button at bottom of card
+            if let onChangeVideo = onChangeVideo {
+                Divider()
+                    .background(CleanDS.Colors.borderLight)
+                
+                CleanActionButton("Change", style: .ghost, isDisabled: isChangeDisabled) {
+                    onChangeVideo()
+                }
+                .padding(.horizontal, CleanDS.Spacing.sm)
+                .padding(.vertical, CleanDS.Spacing.xs)
+            }
         }
-        .padding(CleanDS.Spacing.md)
         .background(CleanDS.Colors.backgroundSecondary)
         .overlay(
             RoundedRectangle(cornerRadius: CleanDS.Radius.medium)

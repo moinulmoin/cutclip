@@ -9,6 +9,7 @@ import SwiftUI
 
 @main
 struct cutclipApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -22,12 +23,18 @@ struct cutclipApp: App {
                     LicenseManager.shared.initializeLicenseSystem()
                 }
         }
+        .defaultSize(width: 500, height: 600)
         .windowResizability(.contentSize)
-        .defaultSize(width: 500, height: 450)
         .windowStyle(.automatic)
         .defaultPosition(.center)
         .commands {
             CommandGroup(replacing: .newItem, addition: { })
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    appDelegate.checkForUpdates(nil)
+                }
+                .keyboardShortcut("U", modifiers: [.command])
+            }
         }
     }
 }

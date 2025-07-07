@@ -12,7 +12,8 @@ struct DisclaimerView: View {
     @State private var showContent = false
 
     var body: some View {
-        ScrollView {
+        VStack {
+            Spacer()
             VStack(spacing: CleanDS.Spacing.sectionSpacing) {
                 // Clean Header
                 VStack(spacing: CleanDS.Spacing.lg) {
@@ -83,6 +84,7 @@ struct DisclaimerView: View {
                 .opacity(showContent ? 1.0 : 0.0)
                 .animation(CleanDS.Animation.standard.delay(0.4), value: showContent)
             }
+            Spacer()
         }
         .padding(CleanDS.Spacing.containerNormal)
         .cleanWindow()

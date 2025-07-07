@@ -19,6 +19,9 @@ class BinaryManager: ObservableObject, Sendable {
 
     // Task management
     private var verificationTask: Task<Void, Never>?
+    private var warmUpTask: Task<Void, Never>?
+    private var hasWarmedUp = false
+    private var hasCheckedBinaries = false
 
     nonisolated init() {
         // Create app support directory with graceful error handling
@@ -45,10 +48,8 @@ class BinaryManager: ObservableObject, Sendable {
             try? fileManager.createDirectory(at: appSupportDirectory, withIntermediateDirectories: true)
         }
 
-        // Check for existing binaries
-        Task { @MainActor in
-            self.checkBinaries()
-        }
+        // Don't check binaries on init - wait for first use
+        // This prevents unnecessary warm-up on every app launch
     }
 
     var ytDlpURL: URL? {
@@ -76,20 +77,28 @@ class BinaryManager: ObservableObject, Sendable {
         }
 
         updateConfigurationStatus()
-
-        // Auto-verify binaries if both are present
-        if isConfigured {
-            // Cancel any existing verification task
-            verificationTask?.cancel()
-
-            verificationTask = Task {
-                await verifyBinariesWithFeedback()
-                // Warm up binaries to avoid first-run issues
-                await warmUpBinaries()
-                await MainActor.run {
-                    self.verificationTask = nil
-                }
+        // Don't auto-verify or warm up - use lazy initialization instead
+    }
+    
+    nonisolated func checkBinariesAsync() async {
+        // Do file checks off main thread
+        let binDirectory = appSupportDirectory.appendingPathComponent("bin")
+        let ytDlpFile = binDirectory.appendingPathComponent("yt-dlp")
+        let ffmpegFile = binDirectory.appendingPathComponent("ffmpeg")
+        
+        let ytDlpExists = FileManager.default.fileExists(atPath: ytDlpFile.path)
+        let ffmpegExists = FileManager.default.fileExists(atPath: ffmpegFile.path)
+        
+        // Update paths on main thread
+        await MainActor.run {
+            if ytDlpExists {
+                self.ytDlpPath = ytDlpFile.path
             }
+            if ffmpegExists {
+                self.ffmpegPath = ffmpegFile.path
+            }
+            self.updateConfigurationStatus()
+            // Don't auto-verify or warm up - wait for first use
         }
     }
 
@@ -113,6 +122,8 @@ class BinaryManager: ObservableObject, Sendable {
             ffmpegPath = path
         }
         // Don't trigger automatic verification since binary is pre-verified
+        // But do update configuration status
+        updateConfigurationStatus()
     }
 
     nonisolated func verifyBinary(_ binary: BinaryType) async -> Bool {
@@ -140,14 +151,16 @@ class BinaryManager: ObservableObject, Sendable {
 
             do {
                 try process.run()
+                
+                // Use async notification instead of blocking waitUntilExit
+                process.terminationHandler = { process in
+                    continuation.resume(returning: process.terminationStatus == 0)
+                }
             } catch {
                 print("❌ Failed to verify \(binary.displayName): \(error)")
                 continuation.resume(returning: false)
                 return
             }
-
-            process.waitUntilExit()
-            continuation.resume(returning: process.terminationStatus == 0)
         }
     }
 
@@ -189,12 +202,20 @@ class BinaryManager: ObservableObject, Sendable {
 
     private func updateConfigurationStatus() {
         let hasAllBinaries = ytDlpPath != nil && ffmpegPath != nil
+        
+        print("🔧 BinaryManager.updateConfigurationStatus:")
+        print("  - ytDlpPath: \(ytDlpPath ?? "nil")")
+        print("  - ffmpegPath: \(ffmpegPath ?? "nil")")
+        print("  - errorMessage: \(errorMessage ?? "nil")")
+        print("  - hasAllBinaries: \(hasAllBinaries)")
 
         // Only set as configured if we have all binaries and no error
         if hasAllBinaries && errorMessage == nil {
             isConfigured = true
+            print("  ✅ Setting isConfigured = true")
         } else {
             isConfigured = false
+            print("  ❌ Setting isConfigured = false")
         }
     }
     
@@ -207,10 +228,29 @@ class BinaryManager: ObservableObject, Sendable {
         verificationTask?.cancel()
         verificationTask = nil
         
-        // Warm up binaries in background
-        Task {
+        // Don't warm up binaries here - let them warm up on first use
+        // to avoid blocking the UI transition
+    }
+    
+    /// Ensure binaries are ready for use (lazy initialization)
+    /// Returns immediately if already ready, otherwise initializes
+    func ensureBinariesReady() async {
+        // First time check - load binaries if not done yet
+        if !hasCheckedBinaries {
+            hasCheckedBinaries = true
+            await checkBinariesAsync()
+        }
+        
+        // Warm up if configured but not warmed up yet
+        if isConfigured && !hasWarmedUp {
+            hasWarmedUp = true
             await warmUpBinaries()
         }
+    }
+    
+    /// Check if binaries are ready without blocking
+    var areBinariesReady: Bool {
+        hasCheckedBinaries && isConfigured && hasWarmedUp
     }
     
     /// Warm up binaries to avoid first-run issues

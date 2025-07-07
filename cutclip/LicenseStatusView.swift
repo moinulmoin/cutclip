@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct LicenseStatusView: View {
     @EnvironmentObject private var licenseManager: LicenseManager
@@ -76,16 +77,35 @@ struct LicenseStatusView: View {
                                     isDisabled: isValidating
                                 )
 
-                                CleanActionButton(
-                                    isValidating ? "Validating..." : "Activate License",
-                                    icon: isValidating ? "" : "key.fill",
-                                    style: .primary,
-                                    isDisabled: licenseKeyInput.isEmpty || isValidating
-                                ) {
-                                    validationTask?.cancel()
-                                    validationTask = Task {
-                                        await validateLicenseKey()
-                                        validationTask = nil
+                                HStack(spacing: CleanDS.Spacing.sm) {
+                                    CleanActionButton(
+                                        isValidating ? "Validating..." : "Activate License",
+                                        icon: isValidating ? "" : "key.fill",
+                                        style: .primary,
+                                        isDisabled: licenseKeyInput.isEmpty || isValidating
+                                    ) {
+                                        validationTask?.cancel()
+                                        validationTask = Task {
+                                            await validateLicenseKey()
+                                            validationTask = nil
+                                        }
+                                    }
+                                    
+                                    CleanActionButton(
+                                        "Restore License",
+                                        icon: "arrow.clockwise",
+                                        style: .secondary
+                                    ) {
+                                        Task {
+                                            do {
+                                                let success = try await licenseManager.restoreLicense()
+                                                if success {
+                                                    dismiss()
+                                                }
+                                            } catch {
+                                                // Error is handled within restoreLicense method
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -223,6 +243,7 @@ struct LicenseStatusView: View {
     @ViewBuilder
     private var actionButtons: some View {
         VStack(spacing: CleanDS.Spacing.md) {
+            // License Section
             CleanSectionHeader(title: "Get Lifetime License")
 
             VStack(spacing: CleanDS.Spacing.sm) {
@@ -246,8 +267,43 @@ struct LicenseStatusView: View {
                     }
                 }
             }
+            .cleanSection()
+
+            // App Info Section
+            CleanSectionHeader(title: "About")
+
+            VStack(spacing: CleanDS.Spacing.sm) {
+                // Version info - centered
+                VStack(spacing: CleanDS.Spacing.xs) {
+                    Text("Version \(getAppVersion())")
+                        .font(CleanDS.Typography.bodyMedium)
+                        .foregroundColor(CleanDS.Colors.textPrimary)
+
+                    Text("Build \(getBuildNumber())")
+                        .font(CleanDS.Typography.caption)
+                        .foregroundColor(CleanDS.Colors.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+
+                // Check for Updates button
+                CleanActionButton(
+                    "Check for Updates",
+                    icon: "arrow.clockwise",
+                    style: .ghost
+                ) {
+                    if let appDelegate = AppDelegate.shared {
+                        appDelegate.checkForUpdates(nil)
+                    } else {
+                        print("⚠️ AppDelegate.shared is nil")
+                    }
+                }
+            }
+            .cleanSection()
+            .overlay(
+                RoundedRectangle(cornerRadius: CleanDS.Radius.medium)
+                    .stroke(CleanDS.Colors.border, lineWidth: 1)
+            )
         }
-        .cleanSection()
     }
 
     @MainActor
@@ -292,6 +348,14 @@ struct LicenseStatusView: View {
     @MainActor
     private func refreshLicenseStatus() async {
         await licenseManager.refreshLicenseStatus()
+    }
+
+    private func getAppVersion() -> String {
+        return Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+    }
+
+    private func getBuildNumber() -> String {
+        return Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
     }
 }
 

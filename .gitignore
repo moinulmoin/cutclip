@@ -135,3 +135,10 @@ build-release.sh
 DISTRIBUTION_GUIDE.md
 CLAUDE.local.md
 agent-docs/
+
+# Sparkle
+sparkle/
+releases/
+appcast.xml
+*.delta
+dsa_pub.pem

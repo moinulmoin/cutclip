@@ -11,6 +11,7 @@ struct ClipperHeaderView: View {
     let licenseStatus: LicenseStatus
     let onShowLicense: () -> Void
     let onShowSettings: () -> Void
+    @ObservedObject private var usageTracker = UsageTracker.shared
 
     var body: some View {
         HStack {
@@ -21,6 +22,18 @@ struct ClipperHeaderView: View {
             Spacer()
 
             HStack(spacing: CleanDS.Spacing.sm) {
+                // Daily download counter (shows after 10+ downloads)
+                if usageTracker.dailyDownloadCount >= 10 {
+                    Text("\(usageTracker.dailyDownloadCount) today")
+                        .font(.caption)
+                        .foregroundColor(.secondary.opacity(0.7))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.05))
+                        .clipShape(Capsule())
+                        .transition(.scale.combined(with: .opacity))
+                }
+                
                 // Status indicator
                 CleanStatusIndicator(
                     licenseStatus: licenseStatus,

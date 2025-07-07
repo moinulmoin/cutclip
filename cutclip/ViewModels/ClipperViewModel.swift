@@ -117,6 +117,14 @@ final class ClipperViewModel: ObservableObject {
         videoInfoLoadingTask?.cancel()
         
         videoInfoLoadingTask = Task {
+            // Show loading while binaries initialize (only first time)
+            if !binaryManager.areBinariesReady {
+                await MainActor.run {
+                    self.isLoadingVideoInfo = true
+                }
+                await binaryManager.ensureBinariesReady()
+            }
+            
             await performVideoInfoLoad(service: service)
             await MainActor.run {
                 self.videoInfoLoadingTask = nil
@@ -261,6 +269,12 @@ final class ClipperViewModel: ObservableObject {
             // Check license and usage first
             try await checkLicenseAndUsage()
             
+            // Ensure binaries are ready (lazy initialization)
+            if !binaryManager.areBinariesReady {
+                processingMessage = "Initializing tools..."
+                await binaryManager.ensureBinariesReady()
+            }
+            
             // Validate inputs
             try await validateInputs()
             
@@ -397,6 +411,11 @@ final class ClipperViewModel: ObservableObject {
     private func downloadVideo(job: ClipJob, service: DownloadService) async throws -> String {
         processingMessage = "Downloading video..."
         processingProgress = 0.5
+        
+        // Track this download for safety monitoring
+        await MainActor.run {
+            usageTracker.trackDownload()
+        }
         
         return try await service.downloadVideo(for: job)
     }

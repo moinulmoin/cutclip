@@ -14,6 +14,7 @@ struct CleanClipperView: View {
     @EnvironmentObject private var usageTracker: UsageTracker
     
     @StateObject private var viewModel: ClipperViewModel
+    @State private var showSafetyTip = false
     
     init() {
         // Create a temporary view model that will be properly initialized in onAppear
@@ -37,6 +38,11 @@ struct CleanClipperView: View {
             ScrollView {
                 // Main Content - Constrained Width
                 VStack(spacing: CleanDS.Spacing.sectionSpacing) {
+                    // Safety tip banner (shows after 30 downloads)
+                    if showSafetyTip {
+                        SafetyTipBanner()
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                     // URL Input Section
                     URLInputView(
                         urlText: $viewModel.urlText,
@@ -105,6 +111,7 @@ struct CleanClipperView: View {
                 .environmentObject(licenseManager)
                 .environmentObject(usageTracker)
                 .environmentObject(errorHandler)
+                .frame(width: 420, height: 450)
         }
         .onAppear {
             // Update viewModel with actual environment objects
@@ -116,6 +123,23 @@ struct CleanClipperView: View {
             )
             // Initialize the video info service with the proper binary manager
             viewModel.setupVideoInfoService()
+            
+            // Check if we should show safety tip
+            let (_, shouldShowTip) = usageTracker.getSafetyStatus()
+            if shouldShowTip {
+                withAnimation {
+                    showSafetyTip = true
+                }
+            }
+        }
+        .onReceive(usageTracker.$dailyDownloadCount) { count in
+            // Check if we should show safety tip when download count changes
+            let (_, shouldShowTip) = usageTracker.getSafetyStatus()
+            if shouldShowTip && !showSafetyTip {
+                withAnimation {
+                    showSafetyTip = true
+                }
+            }
         }
         .animation(CleanDS.Animation.standard, value: viewModel.loadedVideoInfo?.title)
         .animation(CleanDS.Animation.standard, value: viewModel.isProcessing)
@@ -157,6 +181,50 @@ struct CleanClipperView: View {
                 action: viewModel.processVideo
             )
             .transition(.opacity)
+        }
+    }
+}
+
+// MARK: - Safety Tip Banner
+
+struct SafetyTipBanner: View {
+    @ObservedObject private var usageTracker = UsageTracker.shared
+    @State private var isVisible = true
+    
+    var body: some View {
+        if isVisible {
+            HStack(spacing: 12) {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(.yellow)
+                
+                Text("You're on fire! 🔥 Taking breaks helps avoid YouTube limits")
+                    .font(.system(size: 13))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Button("Got it") {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        isVisible = false
+                        usageTracker.dismissSafetyTip()
+                    }
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.blue)
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.yellow.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.yellow.opacity(0.2), lineWidth: 1)
+                    )
+            )
+            .padding(.horizontal, CleanDS.Spacing.containerNormal)
         }
     }
 }

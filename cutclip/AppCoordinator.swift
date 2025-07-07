@@ -65,6 +65,12 @@ final class AppCoordinator: ObservableObject {
     
     /// Update the current app state based on various conditions
     func updateAppState() {
+        print("🔄 AppCoordinator.updateAppState called")
+        print("  - disclaimerAccepted: \(disclaimerAccepted)")
+        print("  - binaryManager.isConfigured: \(binaryManager.isConfigured)")
+        print("  - licenseManager.isInitialized: \(licenseManager.isInitialized)")
+        print("  - licenseManager.needsLicenseSetup: \(licenseManager.needsLicenseSetup)")
+        
         if !disclaimerAccepted {
             setView(.disclaimer)
         } else if !binaryManager.isConfigured {
@@ -117,6 +123,33 @@ final class AppCoordinator: ObservableObject {
     private func setupObservers() {
         // Observe disclaimer acceptance
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateAppState()
+            }
+            .store(in: &cancellables)
+        
+        // Observe binary manager configuration changes
+        binaryManager.$isConfigured
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                print("📡 BinaryManager.isConfigured changed, updating app state")
+                self?.updateAppState()
+            }
+            .store(in: &cancellables)
+        
+        // Observe license manager changes
+        licenseManager.$isInitialized
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateAppState()
+            }
+            .store(in: &cancellables)
+        
+        licenseManager.$needsLicenseSetup
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateAppState()

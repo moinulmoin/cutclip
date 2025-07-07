@@ -26,7 +26,7 @@ struct ContentView: View {
                             removal: .opacity.combined(with: .scale(scale: 1.05))
                         ))
                 case .autoSetup:
-                    AutoSetupView(binaryManager: coordinator.binaryManager)
+                    AutoSetupView()
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .trailing)),
                             removal: .opacity.combined(with: .move(edge: .leading))
@@ -79,18 +79,10 @@ struct ContentView: View {
                 .animation(CleanDS.Animation.smooth, value: coordinator.networkMonitor.isConnected)
             }
         }
-        .frame(minWidth: 450, maxWidth: .infinity, minHeight: 500, maxHeight: .infinity)
+        .frame(width: 500, height: 600)
         .environmentAppCoordinator(coordinator)
         .errorAlert(coordinator.errorHandler)
-        .onChange(of: coordinator.binaryManager.isConfigured) { 
-            coordinator.updateAppState() 
-        }
-        .onChange(of: coordinator.licenseManager.isInitialized) { 
-            coordinator.updateAppState() 
-        }
-        .onChange(of: coordinator.licenseManager.needsLicenseSetup) { 
-            coordinator.updateAppState() 
-        }
+        // State changes are now handled by Combine publishers in AppCoordinator
     }
 }
 

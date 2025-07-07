@@ -125,8 +125,8 @@ class LicenseManager: ObservableObject {
     private func performInitialSetup() async {
         print("🔐 Initializing license system...")
         
-        // Clean up legacy keychain items to prevent access prompts
-        secureStorage.cleanupLegacyKeychainItems()
+        // Skip keychain operations on initial setup to avoid password prompt
+        // User can use "Restore License" button if they have an existing license
 
         do {
             // 1. Initialize usage tracking and register device if needed
@@ -134,8 +134,9 @@ class LicenseManager: ObservableObject {
             await usageTracker.registerDeviceIfNeeded()
             print("✅ Usage tracking initialized and device registered.")
 
-            // 2. Check license status
-            await refreshLicenseStatus()
+            // 2. Don't check for stored license on fresh install
+            // Just check device status for free credits
+            await checkDeviceStatusOnly()
 
             // 3. Determine if license setup is needed
             needsLicenseSetup = await licenseStateManager.determineLicenseSetupRequired(currentLicenseStatus: licenseStatus)
@@ -159,6 +160,73 @@ class LicenseManager: ObservableObject {
     }
 
     // MARK: - License Operations
+    
+    @MainActor
+    private func checkDeviceStatusOnly() async {
+        do {
+            let deviceStatus = try await usageTracker.checkDeviceStatus(forceRefresh: true)
+            
+            // Update license status based on device status only (no keychain check)
+            switch deviceStatus {
+            case .found(let deviceData):
+                if let user = deviceData.user, let license = user.license, !license.isEmpty {
+                    // User has a license
+                    licenseStatus = .licensed(key: license, expiresAt: nil, userEmail: user.email)
+                } else if deviceData.freeCredits > 0 {
+                    // Using free credits
+                    licenseStatus = .freeTrial(remaining: deviceData.freeCredits)
+                } else {
+                    // No credits left
+                    licenseStatus = .trialExpired
+                }
+            case .notFound:
+                // Device not found, treat as unlicensed
+                licenseStatus = .unlicensed
+            }
+        } catch {
+            print("⚠️ Failed to check device status: \(error)")
+            licenseStatus = .unknown
+        }
+    }
+    
+    @MainActor
+    func restoreLicense() async throws -> Bool {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        
+        // This method explicitly checks keychain for stored license
+        guard let storedLicense = secureStorage.retrieveLicense() else {
+            errorMessage = "No license found on this device"
+            return false
+        }
+        
+        // Validate the stored license
+        let validationResult = try await usageTracker.validateLicense(licenseKey: storedLicense.key)
+        
+        if validationResult.valid {
+            // Update license status
+            licenseStatus = licenseStateManager.updateLicenseStatus(
+                licenseKey: storedLicense.key,
+                isValid: true
+            )
+            
+            // Force fresh device status check
+            _ = try await usageTracker.checkDeviceStatus(forceRefresh: true)
+            
+            // Sync state
+            licenseStatus = await licenseStateManager.syncLicenseState()
+            needsLicenseSetup = false
+            
+            return true
+        } else {
+            // License is invalid, remove it
+            let _ = secureStorage.deleteLicense()
+            await usageTracker.invalidateCache()
+            errorMessage = "The stored license is no longer valid"
+            return false
+        }
+    }
 
     func validateLicense(_ licenseKey: String) async -> Bool {
         isLoading = true

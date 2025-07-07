@@ -9,14 +9,16 @@ import SwiftUI
 
 struct AutoSetupView: View {
     @StateObject private var setupService = AutoSetupService()
-    @ObservedObject var binaryManager: BinaryManager
+    @EnvironmentObject var coordinator: AppCoordinator
+    @EnvironmentObject var binaryManager: BinaryManager
     @State private var hasStartedSetup = false
     @State private var animateIcon = false
     @State private var showContent = false
     @State private var setupTask: Task<Void, Never>?
 
     var body: some View {
-        ScrollView {
+        VStack {
+            Spacer()
             VStack(spacing: CleanDS.Spacing.sectionSpacing) {
             // Header Section - only show when not complete
             if !setupService.isSetupComplete {
@@ -56,7 +58,7 @@ struct AutoSetupView: View {
                     }
                 } else if !hasStartedSetup {
                     VStack(spacing: CleanDS.Spacing.md) {
-                        Text("CutClip needs to download video processing tools to work properly.")
+                        Text("CutClip needs to download additional tools to work properly.")
                             .multilineTextAlignment(.center)
                             .foregroundColor(CleanDS.Colors.textSecondary)
                             .font(CleanDS.Typography.body)
@@ -76,6 +78,7 @@ struct AutoSetupView: View {
                 }
             }
             }
+            Spacer()
         }
         .padding(CleanDS.Spacing.containerNormal)
         .cleanWindow()
@@ -94,7 +97,7 @@ struct AutoSetupView: View {
         hasStartedSetup = true
         // Cancel any existing setup task
         setupTask?.cancel()
-        
+
         setupTask = Task {
             await setupService.performAutoSetup()
             setupTask = nil
@@ -112,9 +115,13 @@ struct AutoSetupView: View {
         if let ffmpegPath = paths.ffmpeg {
             binaryManager.setBinaryPathVerified(for: .ffmpeg, path: ffmpegPath)
         }
-        
+
         // Mark as configured immediately since binaries are pre-verified
         binaryManager.markAsConfigured()
+        
+        // Debug: Force state update
+        print("✅ AutoSetup complete. BinaryManager.isConfigured = \(binaryManager.isConfigured)")
+        // The AppCoordinator will automatically detect this change via Combine
     }
 }
 
@@ -206,10 +213,12 @@ struct CleanSetupCompleteView: View {
                 "Continue",
                 style: .primary
             ) {
+                print("🎯 Continue button clicked!")
                 onContinue()
             }
             .opacity(showSuccess ? 1.0 : 0.0)
             .animation(CleanDS.Animation.standard.delay(0.15), value: showSuccess)
+            .allowsHitTesting(showSuccess) // Ensure button is clickable only when visible
         }
         .cleanSection()
         .onAppear {
@@ -219,5 +228,7 @@ struct CleanSetupCompleteView: View {
 }
 
 #Preview {
-    AutoSetupView(binaryManager: BinaryManager())
+    AutoSetupView()
+        .environmentObject(AppCoordinator())
+        .environmentObject(BinaryManager())
 }

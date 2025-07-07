@@ -87,6 +87,16 @@ class DownloadService: ObservableObject, Sendable {
         print("🎬 Quality requested: \(job.quality)")
         print("🎬 URL: \(job.url)")
         
+        // User agents for rotation
+        let userAgents = [
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+        ]
+        let randomUserAgent = userAgents.randomElement() ?? userAgents[0]
+        
         let config = ProcessConfiguration(
             executablePath: ytDlpPath,
             arguments: [
@@ -96,6 +106,13 @@ class DownloadService: ObservableObject, Sendable {
                 "--no-playlist",
                 "--newline",  // Output progress on new lines
                 "--progress",  // Show progress
+                // Safety parameters to avoid YouTube detection
+                "--sleep-interval", "3",  // Sleep 3-8 seconds between playlist items
+                "--max-sleep-interval", "8",
+                "--user-agent", randomUserAgent,  // Randomize user agent
+                "--referer", "https://www.youtube.com/",  // Add referer header
+                "--quiet",  // Less verbose to reduce detection
+                "--no-warnings",  // Suppress warnings
                 job.url
             ],
             environment: [
@@ -218,8 +235,26 @@ class DownloadService: ObservableObject, Sendable {
 
 // Global functions for parsing (nonisolated)
 private nonisolated func parseYtDlpError(_ error: String) -> String {
+    // Rate limiting detection - HIGHEST PRIORITY
+    if error.contains("HTTP Error 429") || error.contains("Too Many Requests") {
+        return "YouTube has temporarily blocked downloads from your IP. Please wait a few hours before trying again. Using a VPN may help."
+    } else if error.contains("Sign in to confirm you're not a bot") {
+        return "YouTube is requiring verification. This usually means too many downloads. Please wait before trying again."
+    }
+    
+    // Consolidated fragment error handling
+    else if error.contains("fragment") && error.contains("not found") {
+        if error.contains("100%") {
+            return "The video downloaded successfully but failed during processing. This can happen with longer videos or when YouTube's servers are busy. Please try again in a few moments."
+        } else if error.contains("HTTP Error 403") {
+            return "The download was interrupted during processing. This often happens when YouTube's servers timeout. Please try downloading again with a smaller quality setting or shorter clip duration."
+        } else {
+            return "The video stream was interrupted during processing. This typically happens when YouTube's CDN tokens expire. Please try downloading again with a lower quality setting."
+        }
+    }
+    
     // Common yt-dlp error patterns and user-friendly messages
-    if error.contains("Sign in to confirm your age") || error.contains("age-restricted") {
+    else if error.contains("Sign in to confirm your age") || error.contains("age-restricted") {
         return "This video is age-restricted. YouTube requires sign-in which is not supported."
     } else if error.contains("Private video") {
         return "This video is private and cannot be downloaded."

@@ -15,6 +15,10 @@ class UsageTracker: ObservableObject {
     @Published var hasExceededLimit: Bool = false
     @Published var isLoading: Bool = false
     @Published var hasInitializedCredits: Bool = false
+    
+    // Daily download tracking
+    @Published var dailyDownloadCount: Int = 0
+    @Published var hasShownSafetyTip: Bool = false
 
     // Thread-safe cache manager
     private let cacheService = CacheService()
@@ -31,6 +35,11 @@ class UsageTracker: ObservableObject {
     // MARK: - API Configuration
     private var baseURL: String { APIConfiguration.baseURL }
     private let maxFreeCredits = 3
+    
+    // MARK: - Download Tracking Configuration
+    private let downloadHistoryKey = "CutClip.DailyDownloadHistory"
+    private let lastDownloadDateKey = "CutClip.LastDownloadDate"
+    private let hasShownSafetyTipKey = "CutClip.HasShownSafetyTip"
     
     // MARK: - Initialization
     private init() {
@@ -51,6 +60,10 @@ class UsageTracker: ObservableObject {
                 self?.isLoading = isLoading
             }
         }
+        
+        // Initialize daily download tracking
+        loadDailyDownloadCount()
+        hasShownSafetyTip = UserDefaults.standard.bool(forKey: hasShownSafetyTipKey)
     }
 
     // MARK: - Users API Methods
@@ -224,6 +237,64 @@ class UsageTracker: ObservableObject {
             "has_license": SecureStorage.shared.hasValidLicense(),
             "usage_status": getUsageStatus().rawValue
         ]
+    }
+    
+    // MARK: - Daily Download Tracking
+    
+    /// Track a new download
+    func trackDownload() {
+        // Check if we need to reset the daily count
+        let today = Calendar.current.startOfDay(for: Date())
+        if let lastDownloadDate = UserDefaults.standard.object(forKey: lastDownloadDateKey) as? Date {
+            let lastDownloadDay = Calendar.current.startOfDay(for: lastDownloadDate)
+            if lastDownloadDay != today {
+                // New day, reset counter
+                dailyDownloadCount = 0
+            }
+        }
+        
+        // Increment counter and save
+        dailyDownloadCount += 1
+        UserDefaults.standard.set(Date(), forKey: lastDownloadDateKey)
+        UserDefaults.standard.set(dailyDownloadCount, forKey: downloadHistoryKey)
+        
+        // Check if we should show safety tip (after 30 downloads)
+        if dailyDownloadCount >= 30 && !hasShownSafetyTip {
+            hasShownSafetyTip = true
+            UserDefaults.standard.set(true, forKey: hasShownSafetyTipKey)
+        }
+    }
+    
+    /// Load the current daily download count
+    private func loadDailyDownloadCount() {
+        // Check if we need to reset based on date
+        let today = Calendar.current.startOfDay(for: Date())
+        if let lastDownloadDate = UserDefaults.standard.object(forKey: lastDownloadDateKey) as? Date {
+            let lastDownloadDay = Calendar.current.startOfDay(for: lastDownloadDate)
+            if lastDownloadDay == today {
+                // Same day, load the count
+                dailyDownloadCount = UserDefaults.standard.integer(forKey: downloadHistoryKey)
+            } else {
+                // Different day, reset
+                dailyDownloadCount = 0
+            }
+        } else {
+            // No previous date, start fresh
+            dailyDownloadCount = 0
+        }
+    }
+    
+    /// Get safety status for UI display
+    func getSafetyStatus() -> (showCounter: Bool, showTip: Bool) {
+        let showCounter = dailyDownloadCount >= 10
+        let showTip = dailyDownloadCount >= 30 && !hasShownSafetyTip
+        return (showCounter, showTip)
+    }
+    
+    /// Dismiss the safety tip
+    func dismissSafetyTip() {
+        hasShownSafetyTip = true
+        UserDefaults.standard.set(true, forKey: hasShownSafetyTipKey)
     }
 }
 

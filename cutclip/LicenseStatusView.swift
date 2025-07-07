@@ -18,6 +18,10 @@ struct LicenseStatusView: View {
     @State private var isValidating = false
     @State private var validationError: String? = nil
     @State private var validationTask: Task<Void, Never>?
+    @State private var isRestoringLicense = false
+    @State private var showRestoreResultModal = false
+    @State private var restoreResultMessage = ""
+    @State private var restoreResultIsError = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -91,28 +95,51 @@ struct LicenseStatusView: View {
                                         }
                                     }
                                     
-                                    CleanActionButton(
-                                        "Restore License",
-                                        icon: "arrow.clockwise",
-                                        style: .secondary
-                                    ) {
+                                    Button(action: {
                                         Task {
+                                            isRestoringLicense = true
+                                            defer { isRestoringLicense = false }
+                                            
                                             do {
                                                 let success = try await licenseManager.restoreLicense()
                                                 if success {
                                                     dismiss()
+                                                } else {
+                                                    // Show modal with error
+                                                    restoreResultMessage = licenseManager.errorMessage ?? "No license found on this device"
+                                                    restoreResultIsError = true
+                                                    showRestoreResultModal = true
                                                 }
                                             } catch {
-                                                // Error is handled within restoreLicense method
+                                                // Show modal with error
+                                                restoreResultMessage = "Failed to restore license: \(error.localizedDescription)"
+                                                restoreResultIsError = true
+                                                showRestoreResultModal = true
                                             }
                                         }
+                                    }) {
+                                        HStack(spacing: CleanDS.Spacing.xs) {
+                                            if isRestoringLicense {
+                                                ProgressView()
+                                                    .scaleEffect(0.8)
+                                                    .frame(width: 16, height: 16)
+                                            } else {
+                                                Image(systemName: "arrow.clockwise")
+                                                    .font(CleanDS.Typography.bodyMedium)
+                                            }
+                                            Text(isRestoringLicense ? "Checking..." : "Restore License")
+                                                .font(CleanDS.Typography.bodyMedium)
+                                        }
+                                        .frame(maxWidth: .infinity)
                                     }
+                                    .disabled(isRestoringLicense)
+                                    .buttonStyle(CleanSecondaryButtonStyle())
                                 }
                             }
                             .cleanSection()
 
-                            // Error display
-                            if let error = validationError ?? licenseManager.errorMessage {
+                            // Error display - only show validation errors, not restore errors
+                            if let error = validationError {
                                 HStack(spacing: CleanDS.Spacing.xs) {
                                     Image(systemName: "exclamationmark.triangle.fill")
                                         .foregroundColor(CleanDS.Colors.error)
@@ -166,6 +193,21 @@ struct LicenseStatusView: View {
         }
         .onDisappear {
             validationTask?.cancel()
+        }
+        .sheet(isPresented: $showRestoreResultModal) {
+            RestoreLicenseResultModal(
+                message: restoreResultMessage,
+                isError: restoreResultIsError,
+                onDismiss: {
+                    showRestoreResultModal = false
+                },
+                onBuyLicense: {
+                    showRestoreResultModal = false
+                    if let url = URL(string: "https://cutclip.moinulmoin.com") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            )
         }
     }
 
@@ -356,6 +398,56 @@ struct LicenseStatusView: View {
 
     private func getBuildNumber() -> String {
         return Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+    }
+}
+
+// MARK: - Restore License Result Modal
+struct RestoreLicenseResultModal: View {
+    let message: String
+    let isError: Bool
+    let onDismiss: () -> Void
+    let onBuyLicense: () -> Void
+    
+    var body: some View {
+        VStack(spacing: CleanDS.Spacing.lg) {
+            // Icon
+            Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 48))
+                .foregroundColor(isError ? CleanDS.Colors.error : CleanDS.Colors.success)
+            
+            // Title
+            Text(isError ? "License Not Found" : "License Restored")
+                .font(CleanDS.Typography.headline)
+                .foregroundColor(CleanDS.Colors.textPrimary)
+            
+            // Message
+            Text(message)
+                .font(CleanDS.Typography.body)
+                .foregroundColor(CleanDS.Colors.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            // Buttons
+            HStack(spacing: CleanDS.Spacing.md) {
+                if isError {
+                    CleanActionButton(
+                        "Buy License",
+                        icon: "crown.fill",
+                        style: .primary,
+                        action: onBuyLicense
+                    )
+                }
+                
+                CleanActionButton(
+                    "OK",
+                    style: isError ? .secondary : .primary,
+                    action: onDismiss
+                )
+            }
+        }
+        .padding(CleanDS.Spacing.containerNormal)
+        .frame(width: 420)
+        .cleanWindow()
     }
 }
 

@@ -57,6 +57,9 @@ final class AppCoordinator: ObservableObject {
         // Set up observers
         setupObservers()
         
+        // Check binaries before initial state update
+        self.binaryManager.checkBinaries()
+        
         // Initial state update
         updateAppState()
     }

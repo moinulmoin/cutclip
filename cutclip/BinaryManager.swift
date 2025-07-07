@@ -48,8 +48,8 @@ class BinaryManager: ObservableObject, Sendable {
             try? fileManager.createDirectory(at: appSupportDirectory, withIntermediateDirectories: true)
         }
 
-        // Don't check binaries on init - wait for first use
-        // This prevents unnecessary warm-up on every app launch
+        // Don't check binaries on init - AppCoordinator will handle this
+        // The state persistence should be handled differently
     }
 
     var ytDlpURL: URL? {

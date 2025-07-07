@@ -191,9 +191,8 @@ class LicenseManager: ObservableObject {
     
     @MainActor
     func restoreLicense() async throws -> Bool {
-        isLoading = true
+        // Don't set isLoading here - that's for the entire view
         errorMessage = nil
-        defer { isLoading = false }
         
         // This method explicitly checks keychain for stored license
         guard let storedLicense = secureStorage.retrieveLicense() else {

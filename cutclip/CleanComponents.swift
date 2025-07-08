@@ -350,7 +350,6 @@ struct CleanProgressSection: View {
             if let onCancel = onCancel {
                 CleanActionButton(
                     "Cancel",
-                    icon: "xmark.circle.fill",
                     style: .destructive,
                     action: onCancel
                 )

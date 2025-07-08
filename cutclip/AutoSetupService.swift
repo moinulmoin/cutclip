@@ -34,11 +34,11 @@ class AutoSetupService: ObservableObject, Sendable {
 
         do {
             // Step 1: Download tools
-            await updateProgress(0.1, "Downloading required tools...")
+            await updateProgress(0.1, "Downloading required tools (1/2)...")
             try await downloadYtDlp()
 
             // Step 2: Download additional tools
-            await updateProgress(0.5, "Installing additional tools...")
+            await updateProgress(0.5, "Downloading additional tools (2/2)...")
             try await downloadFFmpeg()
 
             // Step 3: Make executable
@@ -156,12 +156,8 @@ class AutoSetupService: ObservableObject, Sendable {
         var lastError: Error?
         for attempt in 1...3 {
             do {
-                // Create custom URLSession with timeout
-                let config = URLSessionConfiguration.default
-                config.timeoutIntervalForRequest = 60.0
-                config.timeoutIntervalForResource = 180.0
-                config.waitsForConnectivity = true
-                let session = URLSession(configuration: config)
+                // Use default URLSession without timeout for slow networks
+                let session = URLSession.shared
                 
                 let (tempURL, response) = try await session.download(from: ffmpegURL)
                 
@@ -412,6 +408,13 @@ extension ProcessInfo {
         sysctlbyname("hw.machine", nil, &size, nil, 0)
         var machine = [CChar](repeating: 0, count: size)
         sysctlbyname("hw.machine", &machine, &size, nil, 0)
-        return String(cString: machine)
+        // Remove null terminator and convert to String
+        let machineString = machine.withUnsafeBufferPointer { buffer in
+            let data = Data(buffer: buffer)
+            return String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .controlCharacters)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+        }
+        return machineString
     }
 }

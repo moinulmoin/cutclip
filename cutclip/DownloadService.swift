@@ -11,12 +11,11 @@ import Foundation
 class DownloadService: ObservableObject, Sendable {
     private let binaryManager: BinaryManager
     private let processExecutor = ProcessExecutor()
-    private let cacheService: VideoCacheService
+    private var cacheService: VideoCacheService { VideoCacheService.shared }
     @Published var currentJob: ClipJob?
 
     init(binaryManager: BinaryManager) {
         self.binaryManager = binaryManager
-        self.cacheService = VideoCacheService()
     }
 
     nonisolated func isValidYouTubeURL(_ urlString: String) -> Bool {

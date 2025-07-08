@@ -11,10 +11,11 @@ import Foundation
 class VideoInfoService: ObservableObject, Sendable {
     private let binaryManager: BinaryManager
     private let processExecutor = ProcessExecutor()
+    private var cacheService: VideoCacheService { VideoCacheService.shared }
     @Published var isLoading: Bool = false
     @Published var currentVideoInfo: VideoInfo?
 
-    nonisolated init(binaryManager: BinaryManager) {
+    init(binaryManager: BinaryManager) {
         self.binaryManager = binaryManager
     }
 
@@ -48,12 +49,31 @@ class VideoInfoService: ObservableObject, Sendable {
     }
 
     func loadVideoInfo(for urlString: String) async throws -> VideoInfo {
+        // Extract video ID for caching
+        let videoId = ValidationUtils.extractYouTubeVideoID(urlString)
+        
+        // Check cache first
+        if let videoId = videoId, let cachedInfo = cacheService.checkMetadataCache(videoId: videoId) {
+            print("🎯 Using cached metadata for video \(videoId)")
+            await MainActor.run {
+                self.currentVideoInfo = cachedInfo
+            }
+            return cachedInfo
+        }
+        
         // Retry logic for first-run issues
         var lastError: Error?
 
         for attempt in 1...3 {
             do {
-                return try await loadVideoInfoAttempt(for: urlString)
+                let videoInfo = try await loadVideoInfoAttempt(for: urlString)
+                
+                // Save to cache after successful load
+                if let videoId = videoId {
+                    cacheService.saveMetadataToCache(videoId: videoId, videoInfo: videoInfo)
+                }
+                
+                return videoInfo
             } catch let error as VideoInfoError {
                 lastError = error
 

@@ -19,38 +19,59 @@ struct CachedVideo: Codable {
     let videoInfo: VideoInfo
 }
 
+/// Metadata for cached video information
+struct CachedVideoInfo: Codable {
+    let videoId: String
+    let videoInfo: VideoInfo
+    let cachedAt: Date
+    let expiresAt: Date
+}
+
 /// Service for managing cached video downloads
+/// TODO: Future refactoring - Convert from singleton to dependency injection
+/// This would allow better testing and more flexible architecture
 @MainActor
 class VideoCacheService: ObservableObject {
+    // Singleton instance
+    static let shared = VideoCacheService()
+    
     @Published var totalCacheSize: Int64 = 0
     @Published var isCacheEnabled: Bool = true
     
     private let cacheDirectory: URL
     private let videosDirectory: URL
+    private let metadataDirectory: URL
     private let indexFile: URL
+    private let metadataIndexFile: URL
     private var cacheIndex: [String: CachedVideo] = [:]
+    private var metadataIndex: [String: CachedVideoInfo] = [:]
     
     // Configuration
     private let cacheDuration: TimeInterval = 86400 // 24 hours
     private let maxCacheSize: Int64 = 5 * 1024 * 1024 * 1024 // 5GB
     private let maxCacheEntries: Int = 1000 // Maximum number of cached videos
     
-    init() {
+    private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         cacheDirectory = appSupport.appendingPathComponent("CutClip/cache")
         videosDirectory = cacheDirectory.appendingPathComponent("videos")
+        metadataDirectory = cacheDirectory.appendingPathComponent("metadata")
         indexFile = cacheDirectory.appendingPathComponent("cache_index.json")
+        metadataIndexFile = cacheDirectory.appendingPathComponent("metadata_index.json")
         
         // Create directories if they don't exist
         try? FileManager.default.createDirectory(at: videosDirectory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: metadataDirectory, withIntermediateDirectories: true)
         
         // Load cache index
         loadCacheIndex()
+        loadMetadataIndex()
         
         // Clean expired entries on init (after index is loaded)
         Task {
             try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s delay to ensure index is loaded
             await cleanExpiredCache()
+            await cleanExpiredMetadata()
         }
     }
     
@@ -178,9 +199,15 @@ class VideoCacheService: ObservableObject {
         try? FileManager.default.removeItem(at: videosDirectory)
         try? FileManager.default.createDirectory(at: videosDirectory, withIntermediateDirectories: true)
         
-        // Clear index
+        // Remove all metadata files
+        try? FileManager.default.removeItem(at: metadataDirectory)
+        try? FileManager.default.createDirectory(at: metadataDirectory, withIntermediateDirectories: true)
+        
+        // Clear indexes
         cacheIndex.removeAll()
+        metadataIndex.removeAll()
         saveCacheIndex()
+        saveMetadataIndex()
         totalCacheSize = 0
     }
     
@@ -200,6 +227,69 @@ class VideoCacheService: ObservableObject {
     /// Get human-readable cache size
     var formattedCacheSize: String {
         formatBytes(totalCacheSize)
+    }
+    
+    // MARK: - Metadata Cache Methods
+    
+    /// Check if video metadata is cached and still valid
+    func checkMetadataCache(videoId: String?) -> VideoInfo? {
+        guard isCacheEnabled, let videoId = videoId else { return nil }
+        
+        guard let cached = metadataIndex[videoId] else { return nil }
+        
+        // Check if expired
+        if cached.expiresAt < Date() {
+            // Remove expired entry
+            removeMetadataCacheEntry(videoId: videoId)
+            return nil
+        }
+        
+        print("📦 Metadata cache hit for video \(videoId)")
+        return cached.videoInfo
+    }
+    
+    /// Save video metadata to cache
+    func saveMetadataToCache(videoId: String, videoInfo: VideoInfo) {
+        guard isCacheEnabled else { return }
+        
+        // Create cache entry
+        let cached = CachedVideoInfo(
+            videoId: videoId,
+            videoInfo: videoInfo,
+            cachedAt: Date(),
+            expiresAt: Date().addingTimeInterval(cacheDuration)
+        )
+        
+        // Update index
+        metadataIndex[videoId] = cached
+        saveMetadataIndex()
+        
+        print("📦 Cached metadata for video \(videoId)")
+        
+        // Check if we need to clean up due to entry limits
+        Task {
+            await enforceMaxMetadataEntries()
+        }
+    }
+    
+    /// Remove expired metadata cache entries
+    func cleanExpiredMetadata() async {
+        print("🧹 Cleaning expired metadata entries...")
+        
+        let now = Date()
+        var removedCount = 0
+        
+        for (videoId, cached) in metadataIndex {
+            if cached.expiresAt < now {
+                removeMetadataCacheEntry(videoId: videoId)
+                removedCount += 1
+            }
+        }
+        
+        if removedCount > 0 {
+            print("🧹 Removed \(removedCount) expired metadata entries")
+            saveMetadataIndex()
+        }
     }
     
     // MARK: - Private Methods
@@ -299,6 +389,56 @@ class VideoCacheService: ObservableObject {
         saveCacheIndex()
         updateCacheSize()
         print("✅ Cache entries reduced to \(cacheIndex.count)")
+    }
+    
+    // MARK: - Metadata Private Methods
+    
+    private func loadMetadataIndex() {
+        Task { @MainActor in
+            guard FileManager.default.fileExists(atPath: metadataIndexFile.path) else { return }
+            
+            do {
+                let data = try Data(contentsOf: metadataIndexFile)
+                metadataIndex = try JSONDecoder().decode([String: CachedVideoInfo].self, from: data)
+            } catch {
+                print("⚠️ Failed to load metadata index: \(error)")
+                metadataIndex = [:]
+            }
+        }
+    }
+    
+    private func saveMetadataIndex() {
+        Task { @MainActor in
+            do {
+                let data = try JSONEncoder().encode(metadataIndex)
+                try data.write(to: metadataIndexFile)
+            } catch {
+                print("❌ Failed to save metadata index: \(error)")
+            }
+        }
+    }
+    
+    private func removeMetadataCacheEntry(videoId: String) {
+        metadataIndex.removeValue(forKey: videoId)
+    }
+    
+    private func enforceMaxMetadataEntries() async {
+        guard metadataIndex.count > maxCacheEntries else { return }
+        
+        print("⚠️ Metadata entries (\(metadataIndex.count)) exceed limit (\(maxCacheEntries))")
+        
+        // Sort by cached date (oldest first)
+        let sortedEntries = metadataIndex.sorted { $0.value.cachedAt < $1.value.cachedAt }
+        
+        // Remove oldest entries until under limit
+        let entriesToRemove = metadataIndex.count - maxCacheEntries
+        for (index, (videoId, _)) in sortedEntries.enumerated() {
+            if index >= entriesToRemove { break }
+            removeMetadataCacheEntry(videoId: videoId)
+        }
+        
+        saveMetadataIndex()
+        print("✅ Metadata entries reduced to \(metadataIndex.count)")
     }
 }
 

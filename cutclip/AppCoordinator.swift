@@ -52,7 +52,7 @@ final class AppCoordinator: ObservableObject {
         self.licenseManager = licenseManager ?? LicenseManager.shared
         self.usageTracker = usageTracker ?? UsageTracker.shared
         self.networkMonitor = networkMonitor ?? NetworkMonitor.shared
-        self.cacheService = cacheService ?? VideoCacheService()
+        self.cacheService = cacheService ?? VideoCacheService.shared
         
         // Set up error handler connection
         self.licenseManager.errorHandler = self.errorHandler
@@ -66,6 +66,7 @@ final class AppCoordinator: ObservableObject {
         // Clean expired cache on startup
         Task {
             await self.cacheService.cleanExpiredCache()
+            await self.cacheService.cleanExpiredMetadata()
         }
         
         // Initial state update

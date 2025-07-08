@@ -14,19 +14,16 @@ if [ -z "$1" ]; then
 fi
 
 VERSION=$1
-BUILD=$(git rev-list HEAD --count)
+# Use last 7 characters of commit hash as build number
+BUILD=$(git rev-parse --short HEAD)
 
 echo "🔄 Updating CutClip version..."
 
-# Update Info.plist
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" cutclip/Info.plist
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" cutclip/Info.plist
+# Update in project file (this is where Xcode stores the version)
+sed -i '' "s/MARKETING_VERSION = .*/MARKETING_VERSION = $VERSION;/g" cutclip.xcodeproj/project.pbxproj
+sed -i '' "s/CURRENT_PROJECT_VERSION = .*/CURRENT_PROJECT_VERSION = $BUILD;/g" cutclip.xcodeproj/project.pbxproj
 
-# Also update in project file if MARKETING_VERSION is used
-if grep -q "MARKETING_VERSION" cutclip.xcodeproj/project.pbxproj; then
-    sed -i '' "s/MARKETING_VERSION = .*/MARKETING_VERSION = $VERSION;/g" cutclip.xcodeproj/project.pbxproj
-    sed -i '' "s/CURRENT_PROJECT_VERSION = .*/CURRENT_PROJECT_VERSION = $BUILD;/g" cutclip.xcodeproj/project.pbxproj
-fi
+# Note: The actual Info.plist is generated at build time from these values
 
 echo "✅ Version: $VERSION"
 echo "✅ Build: $BUILD"

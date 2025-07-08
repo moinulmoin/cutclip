@@ -11,10 +11,12 @@ import Foundation
 class DownloadService: ObservableObject, Sendable {
     private let binaryManager: BinaryManager
     private let processExecutor = ProcessExecutor()
+    private let cacheService: VideoCacheService
     @Published var currentJob: ClipJob?
 
-    nonisolated init(binaryManager: BinaryManager) {
+    init(binaryManager: BinaryManager) {
         self.binaryManager = binaryManager
+        self.cacheService = VideoCacheService()
     }
 
     nonisolated func isValidYouTubeURL(_ urlString: String) -> Bool {
@@ -50,6 +52,14 @@ class DownloadService: ObservableObject, Sendable {
     }
 
     nonisolated func downloadVideo(for job: ClipJob) async throws -> String {
+        // Check cache first
+        if let cached = await cacheService.checkCache(videoId: job.videoInfo?.id, quality: job.quality) {
+            print("🎯 Using cached video for \(job.videoInfo?.title ?? "unknown")")
+            // Update progress immediately to 100% for cached videos
+            updateJobProgress(100.0)
+            return cached.filePath
+        }
+        
         let (ytDlpPath, ffmpegPath) = await MainActor.run { 
             (binaryManager.ytDlpPath, binaryManager.ffmpegPath)
         }
@@ -97,11 +107,13 @@ class DownloadService: ObservableObject, Sendable {
         ]
         let randomUserAgent = userAgents.randomElement() ?? userAgents[0]
         
+        let ffmpegDir = URL(fileURLWithPath: ffmpegPath).deletingLastPathComponent().path
+        
         let config = ProcessConfiguration(
             executablePath: ytDlpPath,
             arguments: [
                 "--format", formatString,
-                "--ffmpeg-location", ffmpegPath,  // Tell yt-dlp where FFmpeg is
+                "--ffmpeg-location", ffmpegDir,  // Tell yt-dlp where FFmpeg directory is
                 "--output", outputTemplate,
                 "--no-playlist",
                 "--newline",  // Output progress on new lines
@@ -148,6 +160,17 @@ class DownloadService: ObservableObject, Sendable {
                     .contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
                     .first(where: { $0.lastPathComponent.hasPrefix(uniqueBaseName) }) {
                     
+                    // Save to cache before returning
+                    let cacheSaved = await cacheService.saveToCache(videoPath: finalURL.path, videoInfo: job.videoInfo, quality: job.quality)
+                    
+                    if cacheSaved {
+                        // Return the cache path if successfully cached
+                        if let cached = await cacheService.checkCache(videoId: job.videoInfo?.id, quality: job.quality) {
+                            return cached.filePath
+                        }
+                    }
+                    
+                    // Return original path if caching failed or not found
                     return finalURL.path
                 } else {
                     // Rare, but critical if it happens
@@ -245,12 +268,20 @@ private nonisolated func parseYtDlpError(_ error: String) -> String {
     // Consolidated fragment error handling
     else if error.contains("fragment") && error.contains("not found") {
         if error.contains("100%") {
-            return "The video downloaded successfully but failed during processing. This can happen with longer videos or when YouTube's servers are busy. Please try again in a few moments."
+            return "Video and audio downloaded successfully but merging failed. This usually means FFmpeg couldn't process the files. Please try again or use a different quality setting."
         } else if error.contains("HTTP Error 403") {
             return "The download was interrupted during processing. This often happens when YouTube's servers timeout. Please try downloading again with a smaller quality setting or shorter clip duration."
         } else {
             return "The video stream was interrupted during processing. This typically happens when YouTube's CDN tokens expire. Please try downloading again with a lower quality setting."
         }
+    }
+    
+    // FFmpeg not found or merge failures
+    else if error.contains("ffmpeg") && (error.contains("not found") || error.contains("No such file")) {
+        return "FFmpeg is required to process this video but wasn't found. Please restart the app to reinstall the required tools."
+    }
+    else if error.contains("Merging formats") && error.contains("failed") {
+        return "Failed to merge video and audio streams. This may be due to corrupted downloads or processing issues. Please try again."
     }
     
     // Common yt-dlp error patterns and user-friendly messages

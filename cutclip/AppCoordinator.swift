@@ -23,6 +23,7 @@ final class AppCoordinator: ObservableObject {
     let licenseManager: LicenseManager
     let usageTracker: UsageTracker
     let networkMonitor: NetworkMonitor
+    let cacheService: VideoCacheService
     
     // MARK: - Storage
     @AppStorage("disclaimerAccepted") private var disclaimerAccepted = false
@@ -42,7 +43,8 @@ final class AppCoordinator: ObservableObject {
         errorHandler: ErrorHandler? = nil,
         licenseManager: LicenseManager? = nil,
         usageTracker: UsageTracker? = nil,
-        networkMonitor: NetworkMonitor? = nil
+        networkMonitor: NetworkMonitor? = nil,
+        cacheService: VideoCacheService? = nil
     ) {
         // Use provided instances or create new ones
         self.binaryManager = binaryManager ?? BinaryManager()
@@ -50,6 +52,7 @@ final class AppCoordinator: ObservableObject {
         self.licenseManager = licenseManager ?? LicenseManager.shared
         self.usageTracker = usageTracker ?? UsageTracker.shared
         self.networkMonitor = networkMonitor ?? NetworkMonitor.shared
+        self.cacheService = cacheService ?? VideoCacheService()
         
         // Set up error handler connection
         self.licenseManager.errorHandler = self.errorHandler
@@ -59,6 +62,11 @@ final class AppCoordinator: ObservableObject {
         
         // Check binaries before initial state update
         self.binaryManager.checkBinaries()
+        
+        // Clean expired cache on startup
+        Task {
+            await self.cacheService.cleanExpiredCache()
+        }
         
         // Initial state update
         updateAppState()
@@ -241,6 +249,7 @@ extension View {
             .environmentObject(coordinator.errorHandler)
             .environmentObject(coordinator.licenseManager)
             .environmentObject(coordinator.usageTracker)
+            .environmentObject(coordinator.cacheService)
             .environment(\.appCoordinator, coordinator)
     }
 }

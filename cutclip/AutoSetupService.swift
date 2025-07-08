@@ -136,16 +136,42 @@ class AutoSetupService: ObservableObject, Sendable {
     }
 
     nonisolated private func downloadFFmpeg() async throws {
-        // For macOS, we'll use a static build from a reliable source
-        // This is a simplified approach - in production you might want to use official builds
-        let ffmpegURL = URL(string: "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip")!
+        // Use static FFmpeg build from osxexperts.net - MUCH faster than evermeet.cx
+        // This is a trusted source that provides regular macOS builds
+        // Architecture detection: Use ARM64 for Apple Silicon, x86_64 for Intel
+        let isAppleSilicon = ProcessInfo.processInfo.machineHardwareName?.contains("arm64") ?? false
+        let ffmpegURL: URL
+        
+        if isAppleSilicon {
+            // Apple Silicon (M1/M2/M3)
+            ffmpegURL = URL(string: "https://www.osxexperts.net/ffmpeg61arm.zip")!
+        } else {
+            // Intel
+            ffmpegURL = URL(string: "https://www.osxexperts.net/ffmpeg61intel.zip")!
+        }
+        
         let destinationURL = binDirectory.appendingPathComponent("ffmpeg.zip")
 
         // Retry logic with exponential backoff for large binary downloads
         var lastError: Error?
         for attempt in 1...3 {
             do {
-                let (tempURL, _) = try await URLSession.shared.download(from: ffmpegURL)
+                // Create custom URLSession with timeout
+                let config = URLSessionConfiguration.default
+                config.timeoutIntervalForRequest = 60.0
+                config.timeoutIntervalForResource = 180.0
+                config.waitsForConnectivity = true
+                let session = URLSession(configuration: config)
+                
+                let (tempURL, response) = try await session.download(from: ffmpegURL)
+                
+                // Check HTTP response
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("📊 HTTP Status: \(httpResponse.statusCode)")
+                    if httpResponse.statusCode != 200 {
+                        throw SetupError.downloadFailed("HTTP error \(httpResponse.statusCode)")
+                    }
+                }
                 
                 // Remove existing file if it exists
                 if FileManager.default.fileExists(atPath: destinationURL.path) {
@@ -179,9 +205,14 @@ class AutoSetupService: ObservableObject, Sendable {
 
     nonisolated private func extractFFmpeg() async throws {
         let zipURL = binDirectory.appendingPathComponent("ffmpeg.zip")
+        let tempExtractDir = binDirectory.appendingPathComponent("ffmpeg_temp")
+        
+        // Create temp directory
+        try? FileManager.default.createDirectory(at: tempExtractDir, withIntermediateDirectories: true)
+        
         let config = ProcessConfiguration(
             executablePath: "/usr/bin/unzip",
-            arguments: ["-o", zipURL.path, "-d", binDirectory.path],
+            arguments: ["-o", zipURL.path, "-d", tempExtractDir.path],
             timeout: 30 // 30 seconds should be enough for extraction
         )
 
@@ -190,18 +221,33 @@ class AutoSetupService: ObservableObject, Sendable {
             throw SetupError.extractionFailed("Failed to extract FFmpeg")
         }
 
-        // Move ffmpeg binary to expected location
+        // Find the ffmpeg binary in the extracted folder structure
+        // osxexperts.net usually has a simple structure with ffmpeg at the root
         let extractedFFmpeg = binDirectory.appendingPathComponent("ffmpeg")
-        if !FileManager.default.fileExists(atPath: extractedFFmpeg.path) {
-            // Look for ffmpeg binary in extracted contents
-            let contents = try FileManager.default.contentsOfDirectory(at: binDirectory, includingPropertiesForKeys: nil)
-            if let ffmpegBinary = contents.first(where: { $0.lastPathComponent == "ffmpeg" || $0.pathExtension == "" }) {
-                try FileManager.default.moveItem(at: ffmpegBinary, to: extractedFFmpeg)
+        
+        // First check if ffmpeg is at the root of extraction
+        let rootFFmpeg = tempExtractDir.appendingPathComponent("ffmpeg")
+        if FileManager.default.fileExists(atPath: rootFFmpeg.path) {
+            try FileManager.default.moveItem(at: rootFFmpeg, to: extractedFFmpeg)
+        } else {
+            // If not at root, search recursively
+            let enumerator = FileManager.default.enumerator(at: tempExtractDir, includingPropertiesForKeys: nil)
+            while let fileURL = enumerator?.nextObject() as? URL {
+                if fileURL.lastPathComponent == "ffmpeg" && !fileURL.hasDirectoryPath {
+                    try FileManager.default.moveItem(at: fileURL, to: extractedFFmpeg)
+                    break
+                }
             }
         }
+        
+        // Verify ffmpeg was found and moved
+        if !FileManager.default.fileExists(atPath: extractedFFmpeg.path) {
+            throw SetupError.extractionFailed("FFmpeg binary not found in archive")
+        }
 
-        // Clean up zip file
+        // Clean up
         try? FileManager.default.removeItem(at: zipURL)
+        try? FileManager.default.removeItem(at: tempExtractDir)
     }
 
     nonisolated private func makeExecutable() throws {
@@ -357,5 +403,15 @@ enum SetupError: LocalizedError, Sendable {
         case .permissionError(let message):
             return "Permission error: \(message)"
         }
+    }
+}
+
+extension ProcessInfo {
+    var machineHardwareName: String? {
+        var size = 0
+        sysctlbyname("hw.machine", nil, &size, nil, 0)
+        var machine = [CChar](repeating: 0, count: size)
+        sysctlbyname("hw.machine", &machine, &size, nil, 0)
+        return String(cString: machine)
     }
 }

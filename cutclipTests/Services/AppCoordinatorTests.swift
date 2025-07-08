@@ -170,7 +170,7 @@ final class AppCoordinatorTests: XCTestCase {
         // Setup free credits scenario
         mockLicenseManager.mockHasValidLicense = false
         mockLicenseManager.mockCanUseApp = true
-        mockUsageTracker.mockFreeCredits = 3
+        mockUsageTracker.mockFreeCredits = 5
         
         // Complete license setup
         await coordinator.licenseSetupCompleted()

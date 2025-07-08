@@ -76,7 +76,7 @@ final class UsageTrackerTests: XCTestCase {
     
     func testCheckDeviceStatusUsesCache() async throws {
         // Given: Mock device status response
-        let deviceData = TestDataBuilder.makeDeviceResponse(freeCredits: 3)
+        let deviceData = TestDataBuilder.makeDeviceResponse(freeCredits: 5)
         let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://cutclip.moinulmoin.com/api"
         let url = URL(string: "\(baseURL)/users/check-device?device_id=\(usageTracker.deviceId)")!
         
@@ -88,12 +88,12 @@ final class UsageTrackerTests: XCTestCase {
         
         // Then: Should only make one network request (second uses cache)
         XCTAssertEqual(mockURLSession.requestCount, 1)
-        XCTAssertEqual(usageTracker.freeCredits, 3)
+        XCTAssertEqual(usageTracker.freeCredits, 5)
     }
     
     func testCheckDeviceStatusForceRefresh() async throws {
         // Given: Mock device status response
-        let deviceData = TestDataBuilder.makeDeviceResponse(freeCredits: 3)
+        let deviceData = TestDataBuilder.makeDeviceResponse(freeCredits: 5)
         let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://cutclip.moinulmoin.com/api"
         let url = URL(string: "\(baseURL)/users/check-device?device_id=\(usageTracker.deviceId)")!
         
@@ -130,7 +130,7 @@ final class UsageTrackerTests: XCTestCase {
         // Given: Mock successful device creation
         let deviceData = TestDataBuilder.makeDeviceResponse(
             deviceId: "new-device-123",
-            freeCredits: 3
+            freeCredits: 5
         )
         
         let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://cutclip.moinulmoin.com/api"
@@ -146,7 +146,7 @@ final class UsageTrackerTests: XCTestCase {
         try await usageTracker.createDevice()
         
         // Then: State should be updated
-        XCTAssertEqual(usageTracker.freeCredits, 3)
+        XCTAssertEqual(usageTracker.freeCredits, 5)
         XCTAssertTrue(usageTracker.isActive)
         XCTAssertEqual(mockURLSession.requestCount, 1)
         
@@ -253,7 +253,7 @@ final class UsageTrackerTests: XCTestCase {
         // Test complete device lifecycle: create -> use -> decrement
         
         // 1. Create device
-        let createData = TestDataBuilder.makeDeviceResponse(freeCredits: 3)
+        let createData = TestDataBuilder.makeDeviceResponse(freeCredits: 5)
         let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://cutclip.moinulmoin.com/api"
         mockURLSession.addMockResponse(
             for: URL(string: "\(baseURL)/users/create-device")!,
@@ -262,17 +262,17 @@ final class UsageTrackerTests: XCTestCase {
         )
         
         try await usageTracker.createDevice()
-        XCTAssertEqual(usageTracker.freeCredits, 3)
+        XCTAssertEqual(usageTracker.freeCredits, 5)
         
         // 2. Check status
-        let statusData = TestDataBuilder.makeDeviceResponse(freeCredits: 3)
+        let statusData = TestDataBuilder.makeDeviceResponse(freeCredits: 5)
         mockURLSession.addMockResponse(
             for: URL(string: "\(baseURL)/users/check-device?device_id=\(usageTracker.deviceId)")!,
             data: statusData
         )
         
         try await usageTracker.checkDeviceStatus(forceRefresh: true)
-        XCTAssertEqual(usageTracker.freeCredits, 3)
+        XCTAssertEqual(usageTracker.freeCredits, 5)
         
         // 3. Decrement credits
         let decrementData = """
@@ -293,7 +293,7 @@ final class UsageTrackerTests: XCTestCase {
         // Test that cache service properly caches API responses
         
         // Given: Device status response
-        let deviceData = TestDataBuilder.makeDeviceResponse(freeCredits: 3)
+        let deviceData = TestDataBuilder.makeDeviceResponse(freeCredits: 5)
         let baseURL = ProcessInfo.processInfo.environment["CUTCLIP_API_BASE_URL"] ?? "https://cutclip.moinulmoin.com/api"
         let url = URL(string: "\(baseURL)/users/check-device?device_id=\(usageTracker.deviceId)")!
         
@@ -309,7 +309,7 @@ final class UsageTrackerTests: XCTestCase {
         try await usageTracker.checkDeviceStatus()
         
         // Then: Should still have the data from cache
-        XCTAssertEqual(usageTracker.freeCredits, 3)
+        XCTAssertEqual(usageTracker.freeCredits, 5)
     }
     
     // MARK: - Error Recovery Tests

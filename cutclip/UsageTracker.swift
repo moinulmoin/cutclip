@@ -34,7 +34,7 @@ class UsageTracker: ObservableObject {
 
     // MARK: - API Configuration
     private var baseURL: String { APIConfiguration.baseURL }
-    private let maxFreeCredits = 3
+    private let maxFreeCredits = 5
     
     // MARK: - Download Tracking Configuration
     private let downloadHistoryKey = "CutClip.DailyDownloadHistory"

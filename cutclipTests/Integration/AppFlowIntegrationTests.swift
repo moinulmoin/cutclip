@@ -87,14 +87,14 @@ final class AppFlowIntegrationTests: XCTestCase {
         // 4. Use free credits path
         mockServices.licenseManager.mockHasValidLicense = false
         mockServices.licenseManager.mockCanUseApp = true
-        mockServices.usageTracker.mockFreeCredits = 3
+        mockServices.usageTracker.mockFreeCredits = 5
         
         await coordinator.licenseSetupCompleted()
         XCTAssertEqual(coordinator.currentState, .main)
         
         // 5. Verify we can access main app
         XCTAssertTrue(mockServices.licenseManager.canUseApp)
-        XCTAssertEqual(mockServices.usageTracker.freeCredits, 3)
+        XCTAssertEqual(mockServices.usageTracker.freeCredits, 5)
     }
     
     func testReturningUserWithLicense() async throws {

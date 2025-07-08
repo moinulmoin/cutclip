@@ -107,7 +107,7 @@ class MockLicenseManager: LicenseManager {
 @MainActor
 class MockUsageTracker: UsageTracker {
     var mockDeviceId = "mock-device-123"
-    var mockFreeCredits = 3
+    var mockFreeCredits = 5
     var mockIsActive = true
     var mockCheckDeviceResponse: DeviceStatusResponse?
     var mockError: Error?
@@ -162,7 +162,7 @@ class MockUsageTracker: UsageTracker {
         }
         
         // Simulate successful device creation
-        self.freeCredits = 3
+        self.freeCredits = 5
         self.isActive = true
     }
     

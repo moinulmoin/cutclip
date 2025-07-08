@@ -109,13 +109,13 @@ public class DeviceRepository {
             }
         )
         
-        // New devices get 3 free credits
-        onCreditsUpdate?(3, false)
+        // New devices get 5 free credits
+        onCreditsUpdate?(5, false)
         
         // Invalidate cache after creating new device
         await cacheService.invalidate()
         print("🗑️ Cache invalidated after creating new device")
-        print("📱 Device created with 3 free credits")
+        print("📱 Device created with 5 free credits")
         
         return result
     }

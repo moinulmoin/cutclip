@@ -27,7 +27,7 @@ final class CacheServiceTests: XCTestCase {
         let deviceData = DeviceData(
             id: "123",
             deviceId: "device-123",
-            freeCredits: 3,
+            freeCredits: 5,
             user: nil
         )
         
@@ -39,7 +39,7 @@ final class CacheServiceTests: XCTestCase {
         XCTAssertNotNil(cached)
         XCTAssertEqual(cached?.data.id, "123")
         XCTAssertEqual(cached?.data.deviceId, "device-123")
-        XCTAssertEqual(cached?.data.freeCredits, 3)
+        XCTAssertEqual(cached?.data.freeCredits, 5)
         XCTAssertLessThan(cached?.age ?? 999, 1.0) // Should be very recent
     }
     
@@ -48,7 +48,7 @@ final class CacheServiceTests: XCTestCase {
         let deviceData = DeviceData(
             id: "123",
             deviceId: "device-123",
-            freeCredits: 3,
+            freeCredits: 5,
             user: nil
         )
         await cacheService.setCachedData(deviceData)
@@ -69,7 +69,7 @@ final class CacheServiceTests: XCTestCase {
         let deviceData = DeviceData(
             id: "123",
             deviceId: "device-123",
-            freeCredits: 3,
+            freeCredits: 5,
             user: nil
         )
         await cacheService.setCachedData(deviceData)
@@ -93,7 +93,7 @@ final class CacheServiceTests: XCTestCase {
         let deviceData = DeviceData(
             id: "123",
             deviceId: "device-123",
-            freeCredits: 3,
+            freeCredits: 5,
             user: nil
         )
         await cacheService.setCachedData(deviceData)
@@ -115,13 +115,13 @@ final class CacheServiceTests: XCTestCase {
         let deviceData = DeviceData(
             id: "123",
             deviceId: "device-123",
-            freeCredits: 3,
+            freeCredits: 5,
             user: nil
         )
         await cacheService.setCachedData(deviceData)
         
         // When: Update with same credits
-        await cacheService.updateCredits(3)
+        await cacheService.updateCredits(5)
         
         // Then: Should not mark as recent update
         let hasRecentUpdate = await cacheService.hasRecentCreditUpdate()
@@ -159,7 +159,7 @@ final class CacheServiceTests: XCTestCase {
         // Test free user gets shorter cache validity
         let validity = await cacheService.getCacheValidityForUsage(
             hasLicense: false,
-            currentCredits: 3
+            currentCredits: 5
         )
         
         XCTAssertEqual(validity, 180) // 3 minutes
@@ -194,7 +194,7 @@ final class CacheServiceTests: XCTestCase {
         let deviceData = DeviceData(
             id: "123",
             deviceId: "device-123",
-            freeCredits: 3,
+            freeCredits: 5,
             user: nil
         )
         await cacheService.setCachedData(deviceData)
@@ -217,7 +217,7 @@ final class CacheServiceTests: XCTestCase {
         let deviceData = DeviceData(
             id: "123",
             deviceId: "device-123",
-            freeCredits: 3,
+            freeCredits: 5,
             user: nil
         )
         
@@ -308,7 +308,7 @@ final class CacheServiceTests: XCTestCase {
         let deviceData = DeviceData(
             id: "123",
             deviceId: "device-123",
-            freeCredits: 3,
+            freeCredits: 5,
             user: nil
         )
         await cacheService.setCachedData(deviceData)
@@ -331,7 +331,7 @@ final class CacheServiceTests: XCTestCase {
         let deviceData = DeviceData(
             id: "123",
             deviceId: "device-123",
-            freeCredits: 3,
+            freeCredits: 5,
             user: nil
         )
         

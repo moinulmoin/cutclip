@@ -139,7 +139,7 @@ class MockFileManager {
 struct TestDataBuilder {
     static func makeDeviceResponse(
         deviceId: String = "test-device-id",
-        freeCredits: Int = 3,
+        freeCredits: Int = 5,
         isActive: Bool = true
     ) -> Data {
         let json = """

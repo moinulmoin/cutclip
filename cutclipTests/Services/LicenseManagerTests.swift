@@ -83,7 +83,7 @@ final class LicenseManagerTests: XCTestCase {
         XCTAssertTrue(licenseManager.canUseApp())
         
         // Free trial with credits can use app
-        licenseManager.licenseStatus = .freeTrial(remaining: 3)
+        licenseManager.licenseStatus = .freeTrial(remaining: 5)
         XCTAssertTrue(licenseManager.canUseApp())
         
         // Free trial with no credits cannot use app
@@ -262,7 +262,7 @@ final class LicenseManagerTests: XCTestCase {
         XCTAssertFalse(licenseManager.canUseApp())
         
         // Simulate getting free credits
-        licenseManager.licenseStatus = .freeTrial(remaining: 3)
+        licenseManager.licenseStatus = .freeTrial(remaining: 5)
         XCTAssertTrue(licenseManager.canUseApp())
         
         // Use a credit

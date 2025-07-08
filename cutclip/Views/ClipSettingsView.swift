@@ -23,14 +23,14 @@ struct ClipSettingsView: View {
             
             // Time inputs
             HStack(spacing: CleanDS.Spacing.md) {
-                CleanInputField(
+                CleanTimeInputField(
                     label: "Start Time",
                     text: $startTime,
                     placeholder: "00:00:00",
                     isDisabled: isDisabled
                 )
                 
-                CleanInputField(
+                CleanTimeInputField(
                     label: "End Time",
                     text: $endTime,
                     placeholder: "00:00:10",

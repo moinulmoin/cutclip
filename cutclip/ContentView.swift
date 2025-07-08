@@ -8,40 +8,81 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var binaryManager = BinaryManager()
-    @StateObject private var errorHandler = ErrorHandler()
-    @StateObject private var licenseManager = LicenseManager.shared
-    @StateObject private var usageTracker = UsageTracker.shared
-    @AppStorage("disclaimerAccepted") private var disclaimerAccepted = false
-    // Remove duplicate state - use LicenseManager's state instead
-
+    @StateObject private var coordinator = AppCoordinator()
+    
     var body: some View {
-        Group {
-            if !disclaimerAccepted {
-                DisclaimerView()
-            } else if !binaryManager.isConfigured {
-                AutoSetupView(binaryManager: binaryManager)
-            } else if !licenseManager.isInitialized {
-                // Show loading while LicenseManager initializes
-                VStack {
-                    ProgressView("Initializing...")
-                        .scaleEffect(1.2)
+        ZStack {
+            // Background
+            CleanDS.Colors.backgroundPrimary
+                .ignoresSafeArea()
+            
+            // Content with transitions
+            Group {
+                switch coordinator.currentView {
+                case .disclaimer:
+                    DisclaimerView()
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                            removal: .opacity.combined(with: .scale(scale: 1.05))
+                        ))
+                case .autoSetup:
+                    AutoSetupView()
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .trailing)),
+                            removal: .opacity.combined(with: .move(edge: .leading))
+                        ))
+                case .loading:
+                    VStack(spacing: CleanDS.Spacing.md) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Initializing...")
+                            .font(CleanDS.Typography.body)
+                            .foregroundColor(CleanDS.Colors.textSecondary)
+                    }
+                    .transition(.opacity)
+                case .licenseSetup:
+                    LicenseStatusView()
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .trailing)),
+                            removal: .opacity.combined(with: .move(edge: .leading))
+                        ))
+                case .main:
+                    CleanClipperView()
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                            removal: .opacity
+                        ))
                 }
-                .frame(width: 500, height: 450)
-            } else if licenseManager.needsLicenseSetup {
-                LicenseStatusView()
-                    .environmentObject(licenseManager)
-                    .environmentObject(usageTracker)
-                    .environmentObject(errorHandler)
-            } else {
-                ClipperView()
-                    .environmentObject(binaryManager)
-                    .environmentObject(errorHandler)
-                    .environmentObject(licenseManager)
-                    .environmentObject(usageTracker)
+            }
+            .animation(CleanDS.Animation.smooth, value: coordinator.currentView)
+            
+            // Network status overlay
+            if !coordinator.networkMonitor.isConnected {
+                VStack {
+                    HStack(spacing: CleanDS.Spacing.sm) {
+                        Image(systemName: "wifi.slash")
+                            .font(.system(size: 14))
+                        Text("No Internet Connection")
+                            .font(CleanDS.Typography.caption)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, CleanDS.Spacing.md)
+                    .padding(.vertical, CleanDS.Spacing.sm)
+                    .background(Color.red)
+                    .cornerRadius(CleanDS.Radius.small)
+                    .shadow(radius: 4)
+                    
+                    Spacer()
+                }
+                .padding(.top, CleanDS.Spacing.md)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .animation(CleanDS.Animation.smooth, value: coordinator.networkMonitor.isConnected)
             }
         }
-        .errorAlert(errorHandler)
+        .frame(width: 500, height: 600)
+        .environmentAppCoordinator(coordinator)
+        .errorAlert(coordinator.errorHandler)
+        // State changes are now handled by Combine publishers in AppCoordinator
     }
 }
 

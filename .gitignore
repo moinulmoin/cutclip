@@ -133,3 +133,12 @@ build-release.sh
 *.dmg
 
 DISTRIBUTION_GUIDE.md
+CLAUDE.local.md
+agent-docs/
+
+# Sparkle
+sparkle/
+releases/
+appcast.xml
+*.delta
+dsa_pub.pem

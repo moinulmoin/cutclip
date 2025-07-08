@@ -7,172 +7,181 @@
 
 import Foundation
 import SwiftUI
+import AppKit
 
+/// Legacy error handler maintained for backward compatibility
+/// New code should use ErrorPresenter for UI and ErrorFactory for error creation
 @MainActor
 class ErrorHandler: ObservableObject {
-    @Published var currentError: AppError?
-    @Published var showingAlert = false
+    // Internal presenter handles all UI concerns
+    internal let presenter = ErrorPresenter()
     
-    func handle(_ error: Error) {
-        if let appError = error as? AppError {
-            self.currentError = appError
-        } else {
-            self.currentError = AppError.unknown(error.localizedDescription)
+    // Published properties for backward compatibility
+    @Published var currentError: AppError? {
+        didSet {
+            presenter.currentError = currentError
         }
-        self.showingAlert = true
+    }
+    @Published var showingAlert: Bool = false {
+        didSet {
+            presenter.showingAlert = showingAlert
+        }
+    }
+    @Published var showingInitSheet: Bool = false {
+        didSet {
+            presenter.showingInitSheet = showingInitSheet
+        }
     }
     
-    func showError(_ error: AppError) {
-        self.currentError = error
-        self.showingAlert = true
+    var retryAction: (() -> Void)? {
+        get { presenter.retryAction }
+        set { presenter.retryAction = newValue }
+    }
+    
+    var quitAction: (() -> Void)? {
+        get { presenter.quitAction }
+        set { presenter.quitAction = newValue }
+    }
+    
+    var isInitializationError: Bool {
+        get { presenter.isInitializationError }
+        set { presenter.isInitializationError = newValue }
+    }
+    
+    var alertID: UUID {
+        get { presenter.alertID }
+        set { presenter.alertID = newValue }
+    }
+    
+    init() {
+        // Sync presenter state changes back to this class
+        presenter.$currentError
+            .assign(to: &$currentError)
+        presenter.$showingAlert
+            .assign(to: &$showingAlert)
+        presenter.$showingInitSheet
+            .assign(to: &$showingInitSheet)
+    }
+    
+    // MARK: - Legacy Methods (Delegating to Presenter)
+    
+    func handle(_ error: Error, retryAction: (() -> Void)? = nil) {
+        presenter.presentError(error, retryAction: retryAction)
+    }
+    
+    func showError(_ error: AppError, retryAction: (() -> Void)? = nil, isInitialization: Bool = false) {
+        presenter.present(error, retryAction: retryAction, isInitialization: isInitialization)
     }
     
     func clearError() {
-        currentError = nil
-        showingAlert = false
+        presenter.clearError()
     }
     
-    // System checks
+    func handleNetworkError(_ error: Error, retryAction: (() -> Void)? = nil, isInitialization: Bool = false) {
+        presenter.presentNetworkError(error, retryAction: retryAction, isInitialization: isInitialization)
+    }
+    
+    // MARK: - Static Factory Methods (Delegating to ErrorFactory)
+    // These are maintained for backward compatibility
+    
     nonisolated static func checkDiskSpace(requiredMB: Int = 500) throws {
-        guard let downloadsPath = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
-            throw AppError.diskSpace("Cannot access Downloads directory")
-        }
-        
-        do {
-            let resourceValues = try downloadsPath.resourceValues(forKeys: [.volumeAvailableCapacityKey])
-            if let availableCapacity = resourceValues.volumeAvailableCapacity {
-                let availableMB = availableCapacity / (1024 * 1024)
-                if availableMB < requiredMB {
-                    throw AppError.diskSpace("Insufficient disk space. Required: \(requiredMB)MB, Available: \(availableMB)MB")
-                }
-            }
-        } catch {
-            if error is AppError {
-                throw error
-            } else {
-                throw AppError.diskSpace("Unable to check disk space: \(error.localizedDescription)")
-            }
-        }
+        try ErrorValidation.checkDiskSpace(requiredMB: requiredMB)
     }
     
     nonisolated static func checkNetworkConnectivity() async throws {
-        let url = URL(string: "https://www.youtube.com")!
-        let request = URLRequest(url: url, timeoutInterval: 10.0)
-        
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse {
-                if httpResponse.statusCode != 200 {
-                    throw AppError.network("Server temporarily unavailable. Please try again in a moment.")
-                }
-            }
-        } catch {
-            if error is AppError {
-                throw error
-            } else {
-                throw AppError.network("No internet connection. CutClip requires internet.")
-            }
-        }
+        try await ErrorValidation.checkNetworkConnectivity()
     }
     
-    // MARK: - User-Friendly Error Helpers
-    
     nonisolated static func createNoInternetError() -> AppError {
-        return AppError.network("No internet connection. CutClip requires internet.")
+        ErrorFactory.noInternetError()
     }
     
     nonisolated static func createConnectionLostError() -> AppError {
-        return AppError.network("Connection lost. Please check your internet and try again.")
+        ErrorFactory.connectionLostError()
     }
     
     nonisolated static func createServerError() -> AppError {
-        return AppError.network("Server temporarily unavailable. Please try again in a moment.")
+        ErrorFactory.serverError()
     }
     
     nonisolated static func createRequestFailedError() -> AppError {
-        return AppError.network("Request failed. Please check your connection and retry.")
+        ErrorFactory.requestFailedError()
     }
     
     nonisolated static func createInvalidLicenseError() -> AppError {
-        return AppError.licenseError("Invalid license key. Please check and try again.")
+        ErrorFactory.invalidLicenseError()
     }
     
     nonisolated static func createLicenseInUseError() -> AppError {
-        return AppError.licenseError("License already in use on another device. Contact support if needed.")
+        ErrorFactory.licenseInUseError()
     }
     
     nonisolated static func createLicenseVerificationError() -> AppError {
-        return AppError.licenseError("Unable to verify license. Check your internet connection.")
+        ErrorFactory.licenseVerificationError()
     }
     
     nonisolated static func createFreeCreditsExhaustedError() -> AppError {
-        return AppError.licenseError("Free clips used up. Enter a license key for unlimited clipping.")
+        ErrorFactory.freeCreditsExhaustedError()
     }
     
     nonisolated static func createInvalidURLError() -> AppError {
-        return AppError.invalidInput("Invalid YouTube URL. Please check the link and try again.")
+        ErrorFactory.invalidURLError()
     }
     
     nonisolated static func createVideoProcessingError() -> AppError {
-        return AppError.clippingFailed("Video processing failed. This video may be restricted.")
+        ErrorFactory.videoProcessingError()
     }
     
     nonisolated static func createVideoSaveError() -> AppError {
-        return AppError.fileSystem("Unable to save video. Please check your disk space.")
+        ErrorFactory.videoSaveError()
     }
     
     nonisolated static func createSetupDownloadError() -> AppError {
-        return AppError.downloadFailed("Unable to download required tools. Please check your internet connection and try again.")
+        ErrorFactory.setupDownloadError()
     }
     
     nonisolated static func createSetupInterruptedError() -> AppError {
-        return AppError.downloadFailed("Download interrupted. Click 'Try Again' to continue setup.")
+        ErrorFactory.setupInterruptedError()
     }
     
     nonisolated static func createSetupDiskSpaceError() -> AppError {
-        return AppError.diskSpace("Setup failed. Please ensure you have sufficient disk space and try again.")
+        ErrorFactory.setupDiskSpaceError()
     }
     
-    nonisolated static func validateTimeInputs(startTime: String, endTime: String) throws {
-        // Validate format
-        let timePattern = #"^\d{2}:\d{2}:\d{2}$"#
-        let regex = try NSRegularExpression(pattern: timePattern)
-        
-        let startRange = NSRange(startTime.startIndex..<startTime.endIndex, in: startTime)
-        let endRange = NSRange(endTime.startIndex..<endTime.endIndex, in: endTime)
-        
-        guard regex.firstMatch(in: startTime, range: startRange) != nil else {
-            throw AppError.invalidInput("Start time must be in HH:MM:SS format")
-        }
-        
-        guard regex.firstMatch(in: endTime, range: endRange) != nil else {
-            throw AppError.invalidInput("End time must be in HH:MM:SS format")
-        }
-        
-        // Convert to seconds and validate logic
-        let startSeconds = timeToSeconds(startTime)
-        let endSeconds = timeToSeconds(endTime)
-        
-        guard startSeconds < endSeconds else {
-            throw AppError.invalidInput("End time must be after start time")
-        }
-        
-        guard endSeconds - startSeconds >= 1 else {
-            throw AppError.invalidInput("Clip must be at least 1 second long")
-        }
-        
-        // Reasonable clip length limit (30 minutes)
-        guard endSeconds - startSeconds <= 1800 else {
-            throw AppError.invalidInput("Clip cannot be longer than 30 minutes")
-        }
+    nonisolated static func createVideoInfoTimeoutError() -> AppError {
+        ErrorFactory.videoInfoTimeoutError()
     }
     
-    nonisolated private static func timeToSeconds(_ timeString: String) -> Double {
-        let components = timeString.split(separator: ":").compactMap { Double($0) }
-        guard components.count == 3 else { return 0 }
-        return components[0] * 3600 + components[1] * 60 + components[2]
+    nonisolated static func createVideoNotFoundError() -> AppError {
+        ErrorFactory.videoNotFoundError()
+    }
+    
+    nonisolated static func createVideoUnavailableError() -> AppError {
+        ErrorFactory.videoUnavailableError()
+    }
+    
+    nonisolated static func createVideoAgeRestrictedError() -> AppError {
+        ErrorFactory.videoAgeRestrictedError()
+    }
+    
+    nonisolated static func createVideoGeoBlockedError() -> AppError {
+        ErrorFactory.videoGeoBlockedError()
+    }
+    
+    nonisolated static func createVideoCopyrightError() -> AppError {
+        ErrorFactory.videoCopyrightError()
+    }
+    
+    nonisolated static func createVideoInfoParsingError() -> AppError {
+        ErrorFactory.videoInfoParsingError()
+    }
+    
+    nonisolated static func createVideoInfoLoadError() -> AppError {
+        ErrorFactory.videoInfoLoadError()
     }
 }
+
+// MARK: - AppError Definition
 
 enum AppError: LocalizedError, Equatable, Sendable {
     case network(String)
@@ -213,25 +222,16 @@ enum AppError: LocalizedError, Equatable, Sendable {
     
     var errorDescription: String? {
         switch self {
-        case .network(let message):
-            return message
-        case .diskSpace(let message):
-            return message
-        case .invalidInput(let message):
-            return message
-        case .binaryNotFound(let message):
-            return message
-        case .downloadFailed(let message):
-            return message
-        case .clippingFailed(let message):
-            return message
-        case .fileSystem(let message):
-            return message
-        case .licenseError(let message):
-            return message
-        case .initialization(let message):
-            return message
-        case .unknown(let message):
+        case .network(let message),
+             .diskSpace(let message),
+             .invalidInput(let message),
+             .binaryNotFound(let message),
+             .downloadFailed(let message),
+             .clippingFailed(let message),
+             .fileSystem(let message),
+             .licenseError(let message),
+             .initialization(let message),
+             .unknown(let message):
             return message
         }
     }
@@ -271,39 +271,14 @@ enum AppError: LocalizedError, Equatable, Sendable {
     }
 }
 
-// SwiftUI Error Alert View
+// MARK: - Legacy View Modifier
+
 struct ErrorAlertView: ViewModifier {
     @ObservedObject var errorHandler: ErrorHandler
     
     func body(content: Content) -> some View {
         content
-            .alert(
-                errorHandler.currentError?.errorTitle ?? "Error",
-                isPresented: $errorHandler.showingAlert,
-                presenting: errorHandler.currentError
-            ) { error in
-                Button("Dismiss", role: .cancel) {
-                    errorHandler.clearError()
-                }
-                
-                if error.isRetryable {
-                    Button("Retry") {
-                        errorHandler.clearError()
-                        // Retry logic would be handled by the calling view
-                    }
-                }
-            } message: { error in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(error.errorDescription ?? "An unknown error occurred")
-                        .font(.callout)
-                    
-                    if let suggestion = error.recoverySuggestion {
-                        Text(suggestion)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
+            .errorPresenter(errorHandler.presenter)
     }
 }
 

@@ -12,7 +12,11 @@ class SecureStorage {
     nonisolated(unsafe) static let shared = SecureStorage()
     private init() {}
 
-    private let serviceName = "com.cutclip.license"
+    // Use bundle identifier as service name for proper keychain access
+    // Use lazy initialization to avoid potential threading issues during class init
+    private lazy var serviceName: String = {
+        Bundle.main.bundleIdentifier ?? "com.ideaplexa.cutclip"
+    }()
     private let licenseAccount = "license_key"
     private let deviceAccount = "device_registration"
 
@@ -74,9 +78,10 @@ class SecureStorage {
         return deleteData(account: deviceAccount)
     }
 
-    // MARK: - Keychain Operations
-
-    private func storeData(_ data: Data, account: String) -> Bool {
+    // MARK: - Generic Keychain Operations
+    
+    /// Store arbitrary data in keychain (public for API credentials)
+    func storeData(_ data: Data, account: String) -> Bool {
         // First, delete any existing item
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -98,7 +103,8 @@ class SecureStorage {
         return status == errSecSuccess
     }
 
-    private func retrieveData(account: String) -> Data? {
+    /// Retrieve arbitrary data from keychain (public for API credentials)
+    func retrieveData(account: String) -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -114,7 +120,8 @@ class SecureStorage {
         return result as? Data
     }
 
-    private func deleteData(account: String) -> Bool {
+    /// Delete arbitrary data from keychain (public for API credentials)
+    func deleteData(account: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -139,5 +146,43 @@ class SecureStorage {
 
     func hasDeviceRegistration() -> Bool {
         return retrieveDeviceRegistration() != nil
+    }
+
+    // MARK: - Migration
+
+    /// Cleans up old keychain items from previous service names
+    func cleanupLegacyKeychainItems() {
+        let legacyServiceNames = ["com.cutclip.license"]
+
+        for legacyService in legacyServiceNames {
+            // Skip if it's the current service name
+            if legacyService == serviceName { continue }
+
+            // Delete license items
+            let licenseQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: legacyService,
+                kSecAttrAccount as String: licenseAccount
+            ]
+            let licenseStatus = SecItemDelete(licenseQuery as CFDictionary)
+            if licenseStatus == errSecSuccess {
+                print("✅ Deleted legacy license keychain item")
+            } else if licenseStatus != errSecItemNotFound {
+                print("⚠️ Failed to delete legacy license: \(licenseStatus)")
+            }
+
+            // Delete device registration items
+            let deviceQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: legacyService,
+                kSecAttrAccount as String: deviceAccount
+            ]
+            let deviceStatus = SecItemDelete(deviceQuery as CFDictionary)
+            if deviceStatus == errSecSuccess {
+                print("✅ Deleted legacy device registration")
+            } else if deviceStatus != errSecItemNotFound {
+                print("⚠️ Failed to delete legacy device registration: \(deviceStatus)")
+            }
+        }
     }
 }

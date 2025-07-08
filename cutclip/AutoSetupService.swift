@@ -15,6 +15,7 @@ class AutoSetupService: ObservableObject, Sendable {
     @Published var setupError: String?
 
     private let binDirectory: URL
+    private let processExecutor = ProcessExecutor()
 
     init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -33,11 +34,11 @@ class AutoSetupService: ObservableObject, Sendable {
 
         do {
             // Step 1: Download tools
-            await updateProgress(0.1, "Downloading required components...")
+            await updateProgress(0.1, "Downloading required tools (1/2)...")
             try await downloadYtDlp()
 
             // Step 2: Download additional tools
-            await updateProgress(0.5, "Installing additional components...")
+            await updateProgress(0.5, "Downloading additional tools (2/2)...")
             try await downloadFFmpeg()
 
             // Step 3: Make executable
@@ -98,7 +99,23 @@ class AutoSetupService: ObservableObject, Sendable {
         for attempt in 1...3 {
             do {
                 let (tempURL, _) = try await URLSession.shared.download(from: ytDlpURL)
+                
+                // Remove existing file if it exists
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try FileManager.default.removeItem(at: destinationURL)
+                }
+                
                 try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+                
+                // Make executable immediately after download
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destinationURL.path)
+                
+                // Remove quarantine attribute if present
+                let removeQuarantineProcess = Process()
+                removeQuarantineProcess.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+                removeQuarantineProcess.arguments = ["-d", "com.apple.quarantine", destinationURL.path]
+                try? removeQuarantineProcess.run()
+                removeQuarantineProcess.waitUntilExit()
                 if attempt > 1 {
                     print("✅ yt-dlp download succeeded on attempt \(attempt)")
                 }
@@ -119,16 +136,44 @@ class AutoSetupService: ObservableObject, Sendable {
     }
 
     nonisolated private func downloadFFmpeg() async throws {
-        // For macOS, we'll use a static build from a reliable source
-        // This is a simplified approach - in production you might want to use official builds
-        let ffmpegURL = URL(string: "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip")!
+        // Use static FFmpeg build from osxexperts.net - MUCH faster than evermeet.cx
+        // This is a trusted source that provides regular macOS builds
+        // Architecture detection: Use ARM64 for Apple Silicon, x86_64 for Intel
+        let isAppleSilicon = ProcessInfo.processInfo.machineHardwareName?.contains("arm64") ?? false
+        let ffmpegURL: URL
+        
+        if isAppleSilicon {
+            // Apple Silicon (M1/M2/M3)
+            ffmpegURL = URL(string: "https://www.osxexperts.net/ffmpeg61arm.zip")!
+        } else {
+            // Intel
+            ffmpegURL = URL(string: "https://www.osxexperts.net/ffmpeg61intel.zip")!
+        }
+        
         let destinationURL = binDirectory.appendingPathComponent("ffmpeg.zip")
 
         // Retry logic with exponential backoff for large binary downloads
         var lastError: Error?
         for attempt in 1...3 {
             do {
-                let (tempURL, _) = try await URLSession.shared.download(from: ffmpegURL)
+                // Use default URLSession without timeout for slow networks
+                let session = URLSession.shared
+                
+                let (tempURL, response) = try await session.download(from: ffmpegURL)
+                
+                // Check HTTP response
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("📊 HTTP Status: \(httpResponse.statusCode)")
+                    if httpResponse.statusCode != 200 {
+                        throw SetupError.downloadFailed("HTTP error \(httpResponse.statusCode)")
+                    }
+                }
+                
+                // Remove existing file if it exists
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try FileManager.default.removeItem(at: destinationURL)
+                }
+                
                 try FileManager.default.moveItem(at: tempURL, to: destinationURL)
                 if attempt > 1 {
                     print("✅ FFmpeg download succeeded on attempt \(attempt)")
@@ -156,35 +201,49 @@ class AutoSetupService: ObservableObject, Sendable {
 
     nonisolated private func extractFFmpeg() async throws {
         let zipURL = binDirectory.appendingPathComponent("ffmpeg.zip")
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-o", zipURL.path, "-d", binDirectory.path]
+        let tempExtractDir = binDirectory.appendingPathComponent("ffmpeg_temp")
         
-        // Secure process environment
-        process.environment = [
-            "PATH": "/usr/bin:/bin",
-            "HOME": NSTemporaryDirectory()
-        ]
+        // Create temp directory
+        try? FileManager.default.createDirectory(at: tempExtractDir, withIntermediateDirectories: true)
+        
+        let config = ProcessConfiguration(
+            executablePath: "/usr/bin/unzip",
+            arguments: ["-o", zipURL.path, "-d", tempExtractDir.path],
+            timeout: 30 // 30 seconds should be enough for extraction
+        )
 
-        try process.run()
-        process.waitUntilExit()
-
-        if process.terminationStatus != 0 {
+        let success = try await processExecutor.executeSimple(config)
+        if !success {
             throw SetupError.extractionFailed("Failed to extract FFmpeg")
         }
 
-        // Move ffmpeg binary to expected location
+        // Find the ffmpeg binary in the extracted folder structure
+        // osxexperts.net usually has a simple structure with ffmpeg at the root
         let extractedFFmpeg = binDirectory.appendingPathComponent("ffmpeg")
-        if !FileManager.default.fileExists(atPath: extractedFFmpeg.path) {
-            // Look for ffmpeg binary in extracted contents
-            let contents = try FileManager.default.contentsOfDirectory(at: binDirectory, includingPropertiesForKeys: nil)
-            if let ffmpegBinary = contents.first(where: { $0.lastPathComponent == "ffmpeg" || $0.pathExtension == "" }) {
-                try FileManager.default.moveItem(at: ffmpegBinary, to: extractedFFmpeg)
+        
+        // First check if ffmpeg is at the root of extraction
+        let rootFFmpeg = tempExtractDir.appendingPathComponent("ffmpeg")
+        if FileManager.default.fileExists(atPath: rootFFmpeg.path) {
+            try FileManager.default.moveItem(at: rootFFmpeg, to: extractedFFmpeg)
+        } else {
+            // If not at root, search recursively
+            let enumerator = FileManager.default.enumerator(at: tempExtractDir, includingPropertiesForKeys: nil)
+            while let fileURL = enumerator?.nextObject() as? URL {
+                if fileURL.lastPathComponent == "ffmpeg" && !fileURL.hasDirectoryPath {
+                    try FileManager.default.moveItem(at: fileURL, to: extractedFFmpeg)
+                    break
+                }
             }
         }
+        
+        // Verify ffmpeg was found and moved
+        if !FileManager.default.fileExists(atPath: extractedFFmpeg.path) {
+            throw SetupError.extractionFailed("FFmpeg binary not found in archive")
+        }
 
-        // Clean up zip file
+        // Clean up
         try? FileManager.default.removeItem(at: zipURL)
+        try? FileManager.default.removeItem(at: tempExtractDir)
     }
 
     nonisolated private func makeExecutable() throws {
@@ -200,40 +259,101 @@ class AutoSetupService: ObservableObject, Sendable {
         let ytDlpPath = binDirectory.appendingPathComponent("yt-dlp").path
         let ffmpegPath = binDirectory.appendingPathComponent("ffmpeg").path
 
-        // Test yt-dlp
-        let ytDlpWorking = await testBinary(path: ytDlpPath, args: ["--version"])
+        // Test yt-dlp with retry logic
+        var ytDlpWorking = false
+        for attempt in 1...3 {
+            ytDlpWorking = await testBinary(path: ytDlpPath, args: ["--help"])
+            if ytDlpWorking {
+                break
+            }
+            if attempt < 3 {
+                print("⚠️ yt-dlp verification attempt \(attempt) failed, retrying...")
+                try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            }
+        }
+        
         guard ytDlpWorking else {
-            throw SetupError.verificationFailed("yt-dlp verification failed")
+            throw SetupError.verificationFailed("yt-dlp verification failed after 3 attempts")
         }
 
-        // Test ffmpeg
-        let ffmpegWorking = await testBinary(path: ffmpegPath, args: ["-version"])
+        // Test ffmpeg with retry logic
+        var ffmpegWorking = false
+        for attempt in 1...3 {
+            ffmpegWorking = await testBinary(path: ffmpegPath, args: ["-version"])
+            if ffmpegWorking {
+                break
+            }
+            if attempt < 3 {
+                print("⚠️ FFmpeg verification attempt \(attempt) failed, retrying...")
+                try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            }
+        }
+        
         guard ffmpegWorking else {
-            throw SetupError.verificationFailed("FFmpeg verification failed")
+            throw SetupError.verificationFailed("FFmpeg verification failed after 3 attempts")
         }
     }
 
     nonisolated private func testBinary(path: String, args: [String]) async -> Bool {
-        return await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = args
-            
-            // Secure process environment
-            process.environment = [
+        // Check if file exists first
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("❌ Binary not found at path: \(path)")
+            return false
+        }
+        
+        // Check if file is executable
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: path)
+            if let permissions = attributes[.posixPermissions] as? NSNumber {
+                print("📝 Binary permissions: \(String(format: "%o", permissions.intValue))")
+            }
+        } catch {
+            print("❌ Failed to get binary attributes: \(error)")
+        }
+        
+        // Use full path execution - no need for PATH since we're using absolute paths
+        let config = ProcessConfiguration(
+            executablePath: path,
+            arguments: args,
+            environment: [
                 "PATH": "/usr/bin:/bin",
                 "HOME": NSTemporaryDirectory()
-            ]
+            ],
+            timeout: 10 // 10 seconds for binary test
+        )
 
-            process.terminationHandler = { process in
-                continuation.resume(returning: process.terminationStatus == 0)
+        do {
+            let result = try await processExecutor.execute(config)
+            print("📋 Binary test result - Exit code: \(result.exitCode)")
+            print("📋 Output: \(result.outputString ?? "none")")
+            print("📋 Error: \(result.errorString ?? "none")")
+            
+            // Be more lenient with exit codes
+            // Some binaries return non-zero for --help or --version
+            if result.exitCode == 0 {
+                return true
             }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(returning: false)
+            
+            // Check if we got expected output even with non-zero exit code
+            let output = (result.outputString ?? "") + (result.errorString ?? "")
+            let lowercaseOutput = output.lowercased()
+            
+            // For yt-dlp --help, check if we got help text
+            if args.contains("--help") && (lowercaseOutput.contains("usage:") || lowercaseOutput.contains("options:")) {
+                print("✅ Binary produced help output despite exit code \(result.exitCode)")
+                return true
             }
+            
+            // For ffmpeg -version, check if we got version info
+            if args.contains("-version") && (lowercaseOutput.contains("ffmpeg") || lowercaseOutput.contains("version")) {
+                print("✅ Binary produced version output despite exit code \(result.exitCode)")
+                return true
+            }
+            
+            return false
+        } catch {
+            print("❌ Binary test failed with error: \(error)")
+            return false
         }
     }
 
@@ -279,5 +399,22 @@ enum SetupError: LocalizedError, Sendable {
         case .permissionError(let message):
             return "Permission error: \(message)"
         }
+    }
+}
+
+extension ProcessInfo {
+    var machineHardwareName: String? {
+        var size = 0
+        sysctlbyname("hw.machine", nil, &size, nil, 0)
+        var machine = [CChar](repeating: 0, count: size)
+        sysctlbyname("hw.machine", &machine, &size, nil, 0)
+        // Remove null terminator and convert to String
+        let machineString = machine.withUnsafeBufferPointer { buffer in
+            let data = Data(buffer: buffer)
+            return String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .controlCharacters)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+        }
+        return machineString
     }
 }

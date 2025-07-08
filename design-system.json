@@ -1,0 +1,309 @@
+{
+  "designSystem": {
+    "name": "Clean macOS-Style Interface",
+    "version": "1.0.0",
+    "principles": {
+      "clarity": "Prioritize content readability with clear visual hierarchy",
+      "simplicity": "Minimal, uncluttered interface with purposeful elements",
+      "consistency": "Uniform spacing, typography, and interaction patterns",
+      "accessibility": "High contrast ratios and logical navigation flow"
+    },
+    "colorSystem": {
+      "approach": "Subtle, muted palette with high readability",
+      "backgroundLayers": {
+        "primary": "Clean white or very light gray (#FFFFFF, #FAFAFA)",
+        "secondary": "Subtle gray for sidebars (#F5F5F7, #F2F2F7)",
+        "tertiary": "Slightly darker for contrast (#EEEEEE, #E5E5EA)"
+      },
+      "textColors": {
+        "primary": "High contrast dark for main content (#1D1D1F, #000000)",
+        "secondary": "Medium gray for metadata (#6E6E73, #8E8E93)",
+        "tertiary": "Light gray for subtle text (#AEAEB2, #C7C7CC)"
+      },
+      "accentColors": {
+        "principle": "Single accent color for primary actions",
+        "usage": "Buttons, links, active states, progress indicators",
+        "examples": "#007AFF, #34C759, #FF9500"
+      },
+      "semanticColors": {
+        "success": "Green tones (#34C759)",
+        "warning": "Orange/yellow tones (#FF9500)",
+        "error": "Red tones (#FF3B30)",
+        "info": "Blue tones (#007AFF)"
+      }
+    },
+    "typography": {
+      "fontStack": "System font stack (SF Pro, -apple-system, BlinkMacSystemFont)",
+      "hierarchy": {
+        "headline": {
+          "size": "20-24px",
+          "weight": "600-700",
+          "lineHeight": "1.2-1.3",
+          "usage": "Page titles, section headers"
+        },
+        "title": {
+          "size": "16-18px",
+          "weight": "500-600",
+          "lineHeight": "1.3-1.4",
+          "usage": "Card titles, item names"
+        },
+        "body": {
+          "size": "14-16px",
+          "weight": "400",
+          "lineHeight": "1.4-1.5",
+          "usage": "Main content, descriptions"
+        },
+        "caption": {
+          "size": "12-13px",
+          "weight": "400",
+          "lineHeight": "1.3-1.4",
+          "usage": "Metadata, timestamps, secondary info"
+        },
+        "label": {
+          "size": "11-12px",
+          "weight": "500-600",
+          "lineHeight": "1.2",
+          "usage": "Form labels, categories"
+        }
+      }
+    },
+    "spacing": {
+      "system": "8px base unit with consistent multipliers",
+      "scale": {
+        "xs": "4px",
+        "sm": "8px",
+        "md": "16px",
+        "lg": "24px",
+        "xl": "32px",
+        "2xl": "48px",
+        "3xl": "64px"
+      },
+      "containerPadding": {
+        "tight": "12-16px",
+        "normal": "20-24px",
+        "loose": "32-40px"
+      },
+      "componentSpacing": {
+        "withinComponent": "8-12px",
+        "betweenComponents": "16-24px",
+        "sectionSpacing": "32-48px"
+      }
+    },
+    "layout": {
+      "principles": {
+        "flexible": "Adaptable to any app structure - single page, tabs, sidebars, etc.",
+        "contentFocused": "Layout serves content, not the other way around",
+        "consistent": "Same spacing and alignment rules regardless of structure"
+      },
+      "grid": {
+        "baseUnit": "8px",
+        "columns": "Flexible based on content and app needs",
+        "gutters": "16-24px",
+        "usage": "Apply to any layout pattern - grid, flex, stack, etc."
+      },
+      "contentConstraints": {
+        "maxWidth": "Varies by app type (forms: 400px, content: 800px, dashboards: full width)",
+        "padding": "Consistent edge spacing regardless of layout type",
+        "centeringStrategy": "When appropriate for app type"
+      }
+    },
+    "components": {
+      "window": {
+        "borderRadius": "12px",
+        "shadow": "Large, soft shadow with low opacity",
+        "border": "1px solid rgba(0,0,0,0.1)",
+        "titleBar": {
+          "height": "28px",
+          "trafficLights": "Standard macOS red/yellow/green",
+          "title": "Center-aligned or left-aligned system font"
+        }
+      },
+      "components": {
+        "window": {
+          "borderRadius": "12px (for desktop apps) or 0px (for mobile/web)",
+          "shadow": "Large, soft shadow with low opacity (desktop only)",
+          "border": "1px solid rgba(0,0,0,0.1) (when appropriate)",
+          "titleBar": {
+            "height": "28px (macOS) or varies by platform",
+            "adaptable": "Can be header, tab bar, or hidden entirely"
+          }
+        },
+        "navigation": {
+          "adaptableFormats": {
+            "sidebar": "240-280px width, secondary background",
+            "topBar": "Full width, primary background with border",
+            "tabBar": "Bottom or top tabs, equal width distribution",
+            "breadcrumbs": "Horizontal navigation chain",
+            "none": "Single-page apps may not need navigation"
+          },
+          "styling": {
+            "background": "Secondary background or transparent",
+            "padding": "16-20px",
+            "itemSpacing": "4-8px"
+          }
+        },
+        "navigationItems": {
+          "versatileUsage": "Works in sidebars, tab bars, top navigation, etc.",
+          "dimensions": {
+            "height": "32-36px (compact) or 44px+ (touch-friendly)",
+            "minWidth": "Varies by layout - tabs expand, sidebar items fixed"
+          },
+          "borderRadius": "6-8px",
+          "padding": "8-12px horizontal, adjust for layout type",
+          "typography": "14px medium weight",
+          "states": {
+            "default": "Transparent background",
+            "hover": "Light gray background (rgba(0,0,0,0.05))",
+            "active": "Accent color background with white text"
+          }
+        },
+        "listItems": {
+          "structure": "Icon + content + metadata layout",
+          "height": "48-56px",
+          "padding": "12-16px",
+          "borderRadius": "0px (full width) or 8px (contained)",
+          "separator": "1px border or background color change",
+          "hover": "Subtle background color change",
+          "content": {
+            "primaryText": "Title typography",
+            "secondaryText": "Caption typography",
+            "metadata": "Right-aligned timestamp/status"
+          }
+        },
+        "buttons": {
+          "primary": {
+            "background": "Accent color",
+            "text": "White",
+            "borderRadius": "6-8px",
+            "padding": "8-12px horizontal, 6-10px vertical",
+            "fontWeight": "500-600"
+          },
+          "secondary": {
+            "background": "Transparent",
+            "border": "1px solid border color",
+            "text": "Primary text color",
+            "hoverBackground": "Light gray"
+          },
+          "ghost": {
+            "background": "Transparent",
+            "text": "Accent color",
+            "hover": "Light accent background"
+          }
+        },
+        "cards": {
+          "background": "Primary background",
+          "borderRadius": "8-12px",
+          "border": "1px solid border color",
+          "shadow": "Subtle shadow (0 1px 3px rgba(0,0,0,0.1))",
+          "padding": "16-24px",
+          "hover": "Slight shadow increase"
+        },
+        "inputs": {
+          "borderRadius": "6-8px",
+          "border": "1px solid border color",
+          "padding": "8-12px",
+          "fontSize": "14-16px",
+          "focusStyle": "Accent color border + subtle shadow",
+          "background": "White or very light gray"
+        }
+      },
+      "visualEffects": {
+        "shadows": {
+          "subtle": "0 1px 3px rgba(0,0,0,0.1)",
+          "medium": "0 4px 12px rgba(0,0,0,0.15)",
+          "large": "0 8px 24px rgba(0,0,0,0.2)"
+        },
+        "borders": {
+          "default": "1px solid rgba(0,0,0,0.1)",
+          "light": "1px solid rgba(0,0,0,0.05)",
+          "medium": "1px solid rgba(0,0,0,0.2)"
+        },
+        "borderRadius": {
+          "small": "4-6px",
+          "medium": "8-10px",
+          "large": "12-16px"
+        }
+      },
+      "interactions": {
+        "animations": {
+          "duration": "200-300ms",
+          "easing": "ease-out or cubic-bezier(0.2, 0.8, 0.2, 1)",
+          "properties": "Transform, opacity, background-color"
+        },
+        "hoverStates": {
+          "principle": "Subtle feedback without jarring changes",
+          "backgroundShift": "5-10% opacity change",
+          "scaleEffect": "1.02x scale for buttons/cards (optional)"
+        },
+        "focusStates": {
+          "outlineColor": "Accent color",
+          "outlineWidth": "2px",
+          "outlineOffset": "1-2px"
+        }
+      },
+      "contentStrategy": {
+
+        "hierarchy": {
+          "scannable": "Clear visual hierarchy for quick scanning",
+          "grouped": "Related content visually grouped",
+          "progressive": "Most important content first"
+        },
+        "density": {
+          "comfortable": "Generous whitespace",
+          "balanced": "Efficient use of space without crowding",
+          "breathable": "Clear separation between elements"
+        }
+      },
+      "adaptability": {
+        "appTypeFlexibility": {
+          "principle": "Design system provides visual language, not structural requirements",
+          "examples": {
+            "calculator": "Single screen, button grid, no navigation needed",
+            "todoApp": "List-focused, minimal nav, could use tabs or single view",
+            "photoEditor": "Toolbar-based, canvas-centered, floating panels",
+            "dashboard": "Widget-based grid, sidebar navigation optional",
+            "mobileApp": "Tab bar navigation, stack-based screens",
+            "game": "Custom UI overlays, score displays, minimal traditional UI",
+            "form": "Single column, step-by-step, progress indicators"
+          }
+        },
+        "structuralGuidance": {
+          "useWhatYouNeed": "Pick only relevant components - buttons, typography, colors always apply",
+          "skipWhatDoesntFit": "No navigation? Skip nav components. No lists? Skip list styling.",
+          "adaptComponents": "Resize, reposition, or restyle components for your layout",
+          "maintainPrinciples": "Keep spacing, typography, and color principles regardless of structure"
+        },
+        "colorThemes": {
+          "principle": "Easy theme switching by changing color tokens",
+          "darkMode": "Invert background/text relationships, adjust shadows",
+          "brandColors": "Replace accent colors while maintaining contrast ratios"
+        },
+        "componentVariants": {
+          "sizes": "Small, medium, large variants for most components",
+          "densities": "Compact and comfortable spacing options",
+          "styles": "Outlined, filled, ghost variants for interactive elements"
+        },
+        "responsive": {
+          "mobile": "Increase touch targets, simplify navigation, stack content",
+          "tablet": "Balance between mobile and desktop patterns",
+          "desktop": "Full feature set with optimal spacing and hover states"
+        }
+      },
+      "implementationGuidelines": {
+        "flexibility": "Use design system as visual language, not structural blueprint",
+        "pickAndChoose": "Select only components and patterns relevant to your app",
+        "consistency": "Apply typography, spacing, and color tokens universally",
+        "adaptation": "Modify component sizes and layouts to fit your app's unique needs",
+        "performance": "Optimize for smooth animations and transitions",
+        "accessibility": "Minimum 4.5:1 contrast ratio, keyboard navigation support",
+        "scalability": "Component-based architecture with clear naming conventions",
+        "examples": {
+          "simpleApp": "Use typography + buttons + colors, skip navigation components",
+          "complexApp": "Use full component set, adapt layouts as needed",
+          "mobileFirst": "Start with mobile constraints, enhance for larger screens",
+          "webApp": "Focus on responsive grid and component flexibility"
+        }
+      }
+    }
+  }
+}

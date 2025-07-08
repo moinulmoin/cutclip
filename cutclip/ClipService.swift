@@ -10,6 +10,7 @@ import Foundation
 @MainActor
 class ClipService: ObservableObject, Sendable {
     private let binaryManager: BinaryManager
+    private let processExecutor = ProcessExecutor()
     @Published var currentJob: ClipJob?
 
     nonisolated init(binaryManager: BinaryManager) {
@@ -36,6 +37,8 @@ class ClipService: ObservableObject, Sendable {
               FileManager.default.isReadableFile(atPath: inputPath) else {
             throw ClipError.invalidInput("Input file does not exist or is not readable")
         }
+        
+
 
         // Validate time format and values
         guard ValidationUtils.isValidTimeFormat(job.startTime),
@@ -50,6 +53,7 @@ class ClipService: ObservableObject, Sendable {
             throw ClipError.invalidInput("Start time must be before end time")
         }
 
+
         // Create secure output path in Downloads directory
         let downloadsPath = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
         let timestamp = DateFormatter.yyyyMMddHHmmss.string(from: Date())
@@ -62,127 +66,120 @@ class ClipService: ObservableObject, Sendable {
             throw ClipError.diskSpaceError("Cannot write to Downloads directory")
         }
 
-        // Use an actor to manage state instead of captured variables
-        let stateManager = ProcessStateManager()
+        // Build FFmpeg arguments
+        var arguments = [
+            "-i", inputPath,          // Input file (already validated)
+            "-ss", job.startTime,     // Start time (already validated)
+            "-to", job.endTime        // End time (already validated)
+        ]
 
-        return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: ffmpegPath)
-
-            // Secure argument construction - no shell interpolation
-            process.arguments = [
-                "-i", inputPath,          // Input file (already validated)
-                "-ss", job.startTime,     // Start time (already validated)
-                "-to", job.endTime,       // End time (already validated)
-                "-c", "copy",             // Copy streams without re-encoding
-                "-avoid_negative_ts", "make_zero", // Handle negative timestamps
-                "-y",                     // Overwrite output file
-                outputPath                // Output file (constructed securely)
-            ]
-
-            let pipe = Pipe()
-            process.standardError = pipe
-            process.standardOutput = pipe
-
-            // Security: Set restrictive environment
-            process.environment = [
-                "PATH": "/usr/bin:/bin", // Minimal PATH
-                "HOME": NSTemporaryDirectory() // Sandbox home directory
-            ]
-
-            pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                let data = handle.availableData
-                if !data.isEmpty, let self = self {
-                    let output = String(data: data, encoding: .utf8) ?? ""
-
-                    Task {
-                        // Check for duration on initial output
-                        if await stateManager.totalDuration == nil, let duration = self.parseDuration(from: output) {
-                            await stateManager.setTotalDuration(duration)
-                        }
-
-                        // Parse progress using total duration
-                        if let totalDuration = await stateManager.totalDuration,
-                           let progress = self.parseCurrentTime(from: output) {
-                            let percentage = min(progress / totalDuration, 1.0)
-                            await self.updateProgress(percentage)
-                        }
-                    }
-
-                    // Log only non-sensitive information
-                    if !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        print("FFmpeg: \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
-                    }
-                }
+        // Apply video filter if aspect ratio requires cropping or quality scaling
+        var videoFilters: [String] = []
+        
+        // Add crop filter if needed for aspect ratio
+        if let cropFilter = job.aspectRatio.cropFilter {
+            videoFilters.append(cropFilter)
+        }
+        
+        // Add scale filter for output quality (always scale to target quality)
+        if let scaleFilter = job.aspectRatio.scaleFilter(for: job.quality) {
+            videoFilters.append(scaleFilter)
+        } else if job.quality.lowercased() != "best" {
+            // For "Auto" aspect ratio, still scale to target quality if specified
+            if let height = Int(job.quality.lowercased().replacingOccurrences(of: "p", with: "")) {
+                // Ensure height is even for video encoding compatibility
+                let evenHeight = height % 2 == 0 ? height : height + 1
+                videoFilters.append("scale=-2:\(evenHeight)")
             }
+        }
+        
+        if !videoFilters.isEmpty {
+            // Apply video filters and re-encode for quality
+            let combinedFilter = videoFilters.joined(separator: ",")
+            arguments.append(contentsOf: [
+                "-map", "0:v?",           // Map video stream if present
+                "-map", "0:a?",           // Map audio stream if present
+                "-vf", sanitizeFilterString(combinedFilter),
+                "-c:v", "libx264",        // Video codec for encoding
+                "-crf", "18",             // High quality (lower = better)
+                "-preset", "veryfast",    // Fast encoding preset
+                "-c:a", "copy"            // Copy audio without re-encoding
+            ])
+        } else {
+            // When using stream copy, ensure we explicitly map streams
+            arguments.append(contentsOf: [
+                "-map", "0",              // Map all streams from input
+                "-c", "copy",             // Copy all codecs
+                "-movflags", "+faststart" // Optimize for streaming
+            ])
+        }
 
-            process.terminationHandler = { process in
+        // Common arguments
+        arguments.append(contentsOf: [
+            "-avoid_negative_ts", "make_zero", // Handle negative timestamps
+            "-y",                              // Overwrite output file
+            outputPath                         // Output file (constructed securely)
+        ])
+
+        // Debug: Log the FFmpeg command
+        print("🎬 FFmpeg command: \(ffmpegPath) \(arguments.joined(separator: " "))")
+        print("📊 Job details - Quality: \(job.quality), Aspect: \(job.aspectRatio.rawValue)")
+
+        // Track total duration for progress calculation using an actor
+        let durationTracker = DurationTracker()
+        
+        // Configure process execution
+        let config = ProcessConfiguration(
+            executablePath: ffmpegPath,
+            arguments: arguments,
+            timeout: 600, // 10 minutes
+            outputHandler: { [weak self] output in
                 Task {
-                    let didResume = await stateManager.markResumedAndCleanup {
-                        pipe.fileHandleForReading.readabilityHandler = nil
-                        if process.isRunning {
-                            process.terminate()
-                            // Force kill if doesn't terminate within 5 seconds
-                            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
-                                if process.isRunning {
-                                    process.interrupt()
-                                }
-                            }
-                        }
-                    }
-
-                    if !didResume {
-                        if process.terminationStatus == 0 {
-                            // Verify output file was created and has reasonable size
-                            if FileManager.default.fileExists(atPath: outputPath) {
-                                do {
-                                    let attributes = try FileManager.default.attributesOfItem(atPath: outputPath)
-                                    let fileSize = attributes[.size] as? Int64 ?? 0
-
-                                    if fileSize > 1000 { // At least 1KB
-                                        continuation.resume(returning: outputPath)
-                                    } else {
-                                        continuation.resume(throwing: ClipError.processError("Output file is too small or empty"))
-                                    }
-                                } catch {
-                                    continuation.resume(throwing: ClipError.processError("Failed to verify output file: \(error.localizedDescription)"))
-                                }
-                            } else {
-                                continuation.resume(throwing: ClipError.processError("Output file was not created"))
-                            }
-                        } else {
-                            let errorData = try? pipe.fileHandleForReading.readToEnd()
-                            let errorOutput = errorData.flatMap { String(data: $0, encoding: .utf8) } ?? "Unknown error"
-                            continuation.resume(throwing: ClipError.processError("FFmpeg failed: \(errorOutput)"))
+                    // Parse FFmpeg progress with thread-safe duration tracking
+                    if let progress = await durationTracker.parseProgress(from: output) {
+                        await MainActor.run { [weak self] in
+                            self?.updateProgress(progress)
                         }
                     }
                 }
+                
+                // Log non-sensitive information
+                let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    print("FFmpeg: \(trimmed)")
+                }
             }
+        )
 
-            // Security timeout - prevent runaway processes
-            Task {
-                try? await Task.sleep(nanoseconds: 600_000_000_000) // 10 minutes max
-                let didResume = await stateManager.markResumedAndCleanup {
-                    pipe.fileHandleForReading.readabilityHandler = nil
-                    if process.isRunning {
-                        process.terminate()
-                    }
-                }
-                if !didResume {
-                    continuation.resume(throwing: ClipError.processError("Video processing timed out"))
-                }
-            }
+        // Execute the process
+        let result = try await processExecutor.execute(config)
+        
+        // Handle the result
+        if result.isSuccess {
+            // Verify output file was created and has reasonable size
+            if FileManager.default.fileExists(atPath: outputPath) {
+                do {
+                    let attributes = try FileManager.default.attributesOfItem(atPath: outputPath)
+                    let fileSize = attributes[.size] as? Int64 ?? 0
 
-            do {
-                try process.run()
-            } catch {
-                Task {
-                    _ = await stateManager.markResumedAndCleanup {
-                        pipe.fileHandleForReading.readabilityHandler = nil
+                    if fileSize > 1000 { // At least 1KB
+                        print("✅ Output file created: \(outputPath) (\(fileSize) bytes)")
+                        return outputPath
+                    } else {
+                        print("❌ Output file too small: \(fileSize) bytes")
+                        throw ClipError.processError("Output file is too small or empty")
                     }
-                    continuation.resume(throwing: ClipError.processError("Failed to start FFmpeg: \(error.localizedDescription)"))
+                } catch {
+                    throw ClipError.processError("Failed to verify output file: \(error.localizedDescription)")
                 }
+            } else {
+                throw ClipError.processError("Output file was not created")
             }
+        } else {
+            let errorOutput = result.errorString ?? result.outputString ?? "Unknown error"
+            print("❌ FFmpeg process failed with status: \(result.exitCode)")
+            print("❌ Error output: \(errorOutput)")
+            throw ClipError.processError("FFmpeg failed: \(errorOutput)")
         }
     }
 
@@ -199,56 +196,16 @@ class ClipService: ObservableObject, Sendable {
                 startTime: job.startTime,
                 endTime: job.endTime,
                 aspectRatio: job.aspectRatio,
+                quality: job.quality,
                 status: .clipping,
                 progress: progress,
                 downloadedFilePath: job.downloadedFilePath,
                 outputFilePath: job.outputFilePath,
-                errorMessage: job.errorMessage
+                errorMessage: job.errorMessage,
+                videoInfo: job.videoInfo
             )
             currentJob = updatedJob
         }
-    }
-
-    private nonisolated func parseDuration(from output: String) -> Double? {
-        // Look for duration in format "Duration: 00:01:23.45"
-        let durationPattern = #"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})"#
-        let regex = try? NSRegularExpression(pattern: durationPattern)
-        let range = NSRange(output.startIndex..<output.endIndex, in: output)
-
-        if let match = regex?.firstMatch(in: output, range: range) {
-            let hoursRange = Range(match.range(at: 1), in: output)!
-            let minutesRange = Range(match.range(at: 2), in: output)!
-            let secondsRange = Range(match.range(at: 3), in: output)!
-
-            let hours = Double(String(output[hoursRange])) ?? 0
-            let minutes = Double(String(output[minutesRange])) ?? 0
-            let seconds = Double(String(output[secondsRange])) ?? 0
-
-            return hours * 3600 + minutes * 60 + seconds
-        }
-
-        return nil
-    }
-
-    private nonisolated func parseCurrentTime(from output: String) -> Double? {
-        // Look for time in format "time=00:00:12.34"
-        let timePattern = #"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})"#
-        let regex = try? NSRegularExpression(pattern: timePattern)
-        let range = NSRange(output.startIndex..<output.endIndex, in: output)
-
-        if let match = regex?.firstMatch(in: output, range: range) {
-            let hoursRange = Range(match.range(at: 1), in: output)!
-            let minutesRange = Range(match.range(at: 2), in: output)!
-            let secondsRange = Range(match.range(at: 3), in: output)!
-
-            let hours = Double(String(output[hoursRange])) ?? 0
-            let minutes = Double(String(output[minutesRange])) ?? 0
-            let seconds = Double(String(output[secondsRange])) ?? 0
-
-            return hours * 3600 + minutes * 60 + seconds
-        }
-
-        return nil
     }
 
     private nonisolated func generateOutputFileName(for job: ClipJob) -> String {
@@ -275,11 +232,13 @@ class ClipService: ObservableObject, Sendable {
                 startTime: job.startTime,
                 endTime: job.endTime,
                 aspectRatio: job.aspectRatio,
+                quality: job.quality,
                 status: job.status,
                 progress: progress,
                 downloadedFilePath: job.downloadedFilePath,
                 outputFilePath: job.outputFilePath,
-                errorMessage: job.errorMessage
+                errorMessage: job.errorMessage,
+                videoInfo: job.videoInfo
             )
             currentJob = updatedJob
         }
@@ -336,32 +295,16 @@ class ClipService: ObservableObject, Sendable {
     }
 
     private nonisolated func sanitizeFilterString(_ filterString: String) -> String {
-        // Allow only safe characters for video filters
-        let allowedCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:=,.-_")
-        return String(filterString.unicodeScalars.filter { allowedCharacters.contains($0) })
+        // FFmpeg filters are passed directly to the FFmpeg binary as arguments,
+        // not through a shell, so we don't need aggressive sanitization.
+        // We just need to ensure no null bytes or newlines that could break argument parsing.
+        return filterString
+            .replacingOccurrences(of: "\0", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
     }
 }
 
-// Thread-safe actor for process state management
-private actor ProcessStateManager {
-    private var hasResumed = false
-    private(set) var totalDuration: Double?
-
-    func setTotalDuration(_ duration: Double) {
-        if totalDuration == nil {
-            totalDuration = duration
-        }
-    }
-
-    func markResumedAndCleanup(_ cleanup: () -> Void) -> Bool {
-        if hasResumed {
-            return true
-        }
-        hasResumed = true
-        cleanup()
-        return false
-    }
-}
 
 enum ClipError: LocalizedError, Sendable {
     case binaryNotFound(String)
@@ -432,4 +375,49 @@ extension DateFormatter {
         formatter.dateFormat = "yyyyMMdd_HHmmss"
         return formatter
     }()
+}
+
+// MARK: - Thread-safe duration tracking for FFmpeg progress
+
+private actor DurationTracker {
+    private var totalDuration: Double?
+    
+    func parseProgress(from output: String) -> Double? {
+        // First look for total duration if we don't have it
+        if totalDuration == nil {
+            let durationPattern = #"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})"#
+            if let regex = try? NSRegularExpression(pattern: durationPattern),
+               let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..<output.endIndex, in: output)) {
+                let hoursRange = Range(match.range(at: 1), in: output)!
+                let minutesRange = Range(match.range(at: 2), in: output)!
+                let secondsRange = Range(match.range(at: 3), in: output)!
+                
+                let hours = Double(String(output[hoursRange])) ?? 0
+                let minutes = Double(String(output[minutesRange])) ?? 0
+                let seconds = Double(String(output[secondsRange])) ?? 0
+                
+                totalDuration = hours * 3600 + minutes * 60 + seconds
+            }
+        }
+        
+        // Parse current time progress
+        if let duration = totalDuration {
+            let timePattern = #"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})"#
+            if let regex = try? NSRegularExpression(pattern: timePattern),
+               let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..<output.endIndex, in: output)) {
+                let hoursRange = Range(match.range(at: 1), in: output)!
+                let minutesRange = Range(match.range(at: 2), in: output)!
+                let secondsRange = Range(match.range(at: 3), in: output)!
+                
+                let hours = Double(String(output[hoursRange])) ?? 0
+                let minutes = Double(String(output[minutesRange])) ?? 0
+                let seconds = Double(String(output[secondsRange])) ?? 0
+                
+                let currentTime = hours * 3600 + minutes * 60 + seconds
+                return min(currentTime / duration, 1.0)
+            }
+        }
+        
+        return nil
+    }
 }

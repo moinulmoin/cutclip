@@ -91,6 +91,7 @@ class AutoSetupService: ObservableObject, Sendable {
     }
 
     nonisolated private func downloadYtDlp() async throws {
+        // Use the universal macOS binary which is more compatible
         let ytDlpURL = URL(string: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos")!
         let destinationURL = binDirectory.appendingPathComponent("yt-dlp")
 
@@ -110,19 +111,19 @@ class AutoSetupService: ObservableObject, Sendable {
                 // Make executable immediately after download
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destinationURL.path)
                 
-                // Remove quarantine attribute if present
-                let removeQuarantineProcess = Process()
-                removeQuarantineProcess.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
-                removeQuarantineProcess.arguments = ["-d", "com.apple.quarantine", destinationURL.path]
-                try? removeQuarantineProcess.run()
-                removeQuarantineProcess.waitUntilExit()
+                // Remove quarantine attribute from yt-dlp binary
+                let removeQuarantine = Process()
+                removeQuarantine.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+                removeQuarantine.arguments = ["-d", "com.apple.quarantine", destinationURL.path]
+                try? removeQuarantine.run()
+                removeQuarantine.waitUntilExit()
                 if attempt > 1 {
                     print("✅ yt-dlp download succeeded on attempt \(attempt)")
                 }
                 return
             } catch {
                 lastError = error
-                print("⚠️ yt-dlp download failed on attempt \(attempt)/3: \(error.localizedDescription)")
+                LoggingService.shared.error("yt-dlp download failed on attempt \(attempt)/3: \(error.localizedDescription)", category: "setup", error: error)
 
                 if attempt < 3 {
                     let delay = min(2.0 * Double(attempt), 5.0)
@@ -131,24 +132,14 @@ class AutoSetupService: ObservableObject, Sendable {
             }
         }
 
-        print("❌ yt-dlp download failed after 3 attempts")
+        LoggingService.shared.error("yt-dlp download failed after 3 attempts", category: "setup")
         throw lastError ?? SetupError.downloadFailed("Failed to download yt-dlp")
     }
 
     nonisolated private func downloadFFmpeg() async throws {
-        // Use static FFmpeg build from osxexperts.net - MUCH faster than evermeet.cx
-        // This is a trusted source that provides regular macOS builds
-        // Architecture detection: Use ARM64 for Apple Silicon, x86_64 for Intel
-        let isAppleSilicon = ProcessInfo.processInfo.machineHardwareName?.contains("arm64") ?? false
-        let ffmpegURL: URL
-        
-        if isAppleSilicon {
-            // Apple Silicon (M1/M2/M3)
-            ffmpegURL = URL(string: "https://www.osxexperts.net/ffmpeg61arm.zip")!
-        } else {
-            // Intel
-            ffmpegURL = URL(string: "https://www.osxexperts.net/ffmpeg61intel.zip")!
-        }
+        // Use static FFmpeg build from evermeet.cx - proven to work well with yt-dlp
+        // This provides a build with all necessary codecs for YouTube video processing
+        let ffmpegURL = URL(string: "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip")!
         
         let destinationURL = binDirectory.appendingPathComponent("ffmpeg.zip")
 
@@ -217,28 +208,76 @@ class AutoSetupService: ObservableObject, Sendable {
             throw SetupError.extractionFailed("Failed to extract FFmpeg")
         }
 
-        // Find the ffmpeg binary in the extracted folder structure
-        // osxexperts.net usually has a simple structure with ffmpeg at the root
+        // Move ffmpeg binary to expected location
+        // evermeet.cx archives have the binary directly in the root
         let extractedFFmpeg = binDirectory.appendingPathComponent("ffmpeg")
-        
-        // First check if ffmpeg is at the root of extraction
         let rootFFmpeg = tempExtractDir.appendingPathComponent("ffmpeg")
+        
         if FileManager.default.fileExists(atPath: rootFFmpeg.path) {
+            // Remove existing if present
+            try? FileManager.default.removeItem(at: extractedFFmpeg)
             try FileManager.default.moveItem(at: rootFFmpeg, to: extractedFFmpeg)
         } else {
-            // If not at root, search recursively
-            let enumerator = FileManager.default.enumerator(at: tempExtractDir, includingPropertiesForKeys: nil)
-            while let fileURL = enumerator?.nextObject() as? URL {
-                if fileURL.lastPathComponent == "ffmpeg" && !fileURL.hasDirectoryPath {
-                    try FileManager.default.moveItem(at: fileURL, to: extractedFFmpeg)
-                    break
-                }
-            }
+            throw SetupError.extractionFailed("FFmpeg binary not found in archive")
         }
         
-        // Verify ffmpeg was found and moved
-        if !FileManager.default.fileExists(atPath: extractedFFmpeg.path) {
-            throw SetupError.extractionFailed("FFmpeg binary not found in archive")
+        // Remove quarantine attribute from FFmpeg binary
+        LoggingService.shared.info("Removing quarantine from FFmpeg at: \(extractedFFmpeg.path)", category: "setup")
+        
+        // First check if quarantine exists
+        let checkQuarantine = Process()
+        checkQuarantine.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        checkQuarantine.arguments = ["-l", extractedFFmpeg.path]
+        let checkPipe = Pipe()
+        checkQuarantine.standardOutput = checkPipe
+        
+        do {
+            try checkQuarantine.run()
+            checkQuarantine.waitUntilExit()
+            
+            let data = try checkPipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                LoggingService.shared.debug("FFmpeg attributes before removal: \(output.trimmingCharacters(in: .whitespacesAndNewlines))", category: "setup")
+            }
+        } catch {
+            LoggingService.shared.error("Failed to check FFmpeg attributes: \(error)", category: "setup")
+        }
+        
+        // Remove quarantine
+        let removeQuarantine = Process()
+        removeQuarantine.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        removeQuarantine.arguments = ["-d", "com.apple.quarantine", extractedFFmpeg.path]
+        
+        do {
+            try removeQuarantine.run()
+            removeQuarantine.waitUntilExit()
+            
+            if removeQuarantine.terminationStatus == 0 {
+                LoggingService.shared.info("Successfully removed quarantine from FFmpeg", category: "setup")
+            } else {
+                LoggingService.shared.error("Failed to remove quarantine, exit code: \(removeQuarantine.terminationStatus)", category: "setup")
+            }
+        } catch {
+            LoggingService.shared.error("Error removing quarantine: \(error)", category: "setup")
+        }
+        
+        // Verify quarantine was removed
+        let verifyQuarantine = Process()
+        verifyQuarantine.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        verifyQuarantine.arguments = ["-l", extractedFFmpeg.path]
+        let verifyPipe = Pipe()
+        verifyQuarantine.standardOutput = verifyPipe
+        
+        do {
+            try verifyQuarantine.run()
+            verifyQuarantine.waitUntilExit()
+            
+            let data = try verifyPipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                LoggingService.shared.debug("FFmpeg attributes after removal: \(output.isEmpty ? "(none)" : output.trimmingCharacters(in: .whitespacesAndNewlines))", category: "setup")
+            }
+        } catch {
+            LoggingService.shared.error("Failed to verify FFmpeg attributes: \(error)", category: "setup")
         }
 
         // Clean up
@@ -253,11 +292,95 @@ class AutoSetupService: ObservableObject, Sendable {
         // Make files executable
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: ytDlpPath)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: ffmpegPath)
+        
+        // Remove quarantine attributes first
+        removeQuarantine(from: ytDlpPath)
+        removeQuarantine(from: ffmpegPath)
+        
+        // Sign binaries with ad-hoc signature to prevent Gatekeeper issues
+        // This is crucial for notarized apps to work properly
+        signBinaryAdHoc(at: ytDlpPath)
+        signBinaryAdHoc(at: ffmpegPath)
+    }
+    
+    nonisolated private func removeQuarantine(from path: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        process.arguments = ["-d", "com.apple.quarantine", path]
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            if process.terminationStatus == 0 {
+                LoggingService.shared.info("Removed quarantine from \(URL(fileURLWithPath: path).lastPathComponent)", category: "setup")
+            }
+        } catch {
+            // It's OK if this fails - the attribute might not exist
+            LoggingService.shared.debug("No quarantine to remove from \(URL(fileURLWithPath: path).lastPathComponent)", category: "setup")
+        }
+    }
+    
+    nonisolated private func signBinaryAdHoc(at path: String) {
+        let fileName = URL(fileURLWithPath: path).lastPathComponent
+        
+        // First remove existing signature completely
+        let removeSignature = Process()
+        removeSignature.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        removeSignature.arguments = ["--remove-signature", path]
+        
+        do {
+            try removeSignature.run()
+            removeSignature.waitUntilExit()
+            LoggingService.shared.debug("Removed existing signature from \(fileName)", category: "setup")
+        } catch {
+            LoggingService.shared.debug("No existing signature to remove from \(fileName)", category: "setup")
+        }
+        
+        // For PyInstaller binaries like yt-dlp, use less restrictive signing
+        let isYtDlp = fileName == "yt-dlp"
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        
+        if isYtDlp {
+            // For yt-dlp, don't use hardened runtime as it interferes with PyInstaller's extraction
+            process.arguments = [
+                "--force",
+                "--sign", "-",
+                "--timestamp=none",
+                path
+            ]
+        } else {
+            // For regular binaries like ffmpeg, use hardened runtime
+            process.arguments = [
+                "--force",
+                "--sign", "-",
+                "--timestamp=none",
+                "--options", "runtime",
+                path
+            ]
+        }
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            if process.terminationStatus == 0 {
+                LoggingService.shared.info("Successfully signed \(fileName) with ad-hoc signature", category: "setup")
+            } else {
+                LoggingService.shared.error("Failed to sign \(fileName), exit code: \(process.terminationStatus)", category: "setup")
+            }
+        } catch {
+            LoggingService.shared.error("Error signing \(fileName): \(error)", category: "setup")
+        }
     }
 
     nonisolated private func verifyBinaries() async throws {
         let ytDlpPath = binDirectory.appendingPathComponent("yt-dlp").path
         let ffmpegPath = binDirectory.appendingPathComponent("ffmpeg").path
+        
+        LoggingService.shared.info("Verifying binaries - yt-dlp: \(ytDlpPath), ffmpeg: \(ffmpegPath)", category: "setup")
 
         // Test yt-dlp with retry logic
         var ytDlpWorking = false
@@ -267,13 +390,14 @@ class AutoSetupService: ObservableObject, Sendable {
                 break
             }
             if attempt < 3 {
-                print("⚠️ yt-dlp verification attempt \(attempt) failed, retrying...")
+                LoggingService.shared.warning("yt-dlp verification attempt \(attempt) failed, retrying...", category: "setup")
                 try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
             }
         }
         
         guard ytDlpWorking else {
-            throw SetupError.verificationFailed("yt-dlp verification failed after 3 attempts")
+            LoggingService.shared.error("yt-dlp verification failed after 3 attempts. The downloaded tools may be corrupted.", category: "setup")
+            throw SetupError.verificationFailed("yt-dlp verification failed after 3 attempts. The downloaded tools may be corrupted.")
         }
 
         // Test ffmpeg with retry logic
@@ -297,7 +421,7 @@ class AutoSetupService: ObservableObject, Sendable {
     nonisolated private func testBinary(path: String, args: [String]) async -> Bool {
         // Check if file exists first
         guard FileManager.default.fileExists(atPath: path) else {
-            print("❌ Binary not found at path: \(path)")
+            LoggingService.shared.error("Binary not found at path: \(path)", category: "setup")
             return false
         }
         
@@ -305,10 +429,10 @@ class AutoSetupService: ObservableObject, Sendable {
         do {
             let attributes = try FileManager.default.attributesOfItem(atPath: path)
             if let permissions = attributes[.posixPermissions] as? NSNumber {
-                print("📝 Binary permissions: \(String(format: "%o", permissions.intValue))")
+                LoggingService.shared.debug("Binary permissions for \(URL(fileURLWithPath: path).lastPathComponent): \(String(format: "%o", permissions.intValue))", category: "setup")
             }
         } catch {
-            print("❌ Failed to get binary attributes: \(error)")
+            LoggingService.shared.error("Failed to get binary attributes: \(error)", category: "setup")
         }
         
         // Use full path execution - no need for PATH since we're using absolute paths
@@ -324,9 +448,13 @@ class AutoSetupService: ObservableObject, Sendable {
 
         do {
             let result = try await processExecutor.execute(config)
-            print("📋 Binary test result - Exit code: \(result.exitCode)")
-            print("📋 Output: \(result.outputString ?? "none")")
-            print("📋 Error: \(result.errorString ?? "none")")
+            LoggingService.shared.debug("Binary test result for \(URL(fileURLWithPath: path).lastPathComponent) - Exit code: \(result.exitCode)", category: "setup")
+            if let output = result.outputString, !output.isEmpty {
+                LoggingService.shared.debug("Output: \(output.prefix(200))...", category: "setup")
+            }
+            if let error = result.errorString, !error.isEmpty {
+                LoggingService.shared.debug("Error: \(error.prefix(200))...", category: "setup")
+            }
             
             // Be more lenient with exit codes
             // Some binaries return non-zero for --help or --version
@@ -340,7 +468,7 @@ class AutoSetupService: ObservableObject, Sendable {
             
             // For yt-dlp --help, check if we got help text
             if args.contains("--help") && (lowercaseOutput.contains("usage:") || lowercaseOutput.contains("options:")) {
-                print("✅ Binary produced help output despite exit code \(result.exitCode)")
+                LoggingService.shared.info("Binary produced help output despite exit code \(result.exitCode)", category: "setup")
                 return true
             }
             

@@ -10,9 +10,14 @@ import SwiftUI
 @main
 struct cutclipApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @State private var showingLogViewer = false
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .sheet(isPresented: $showingLogViewer) {
+                    LogViewerSheet()
+                }
                 .onAppear {
                     #if DEBUG
                     // Debug: Verify environment variables
@@ -34,6 +39,13 @@ struct cutclipApp: App {
                     appDelegate.checkForUpdates(nil)
                 }
                 .keyboardShortcut("U", modifiers: [.command])
+                
+                Divider()
+                
+                Button("View Logs...") {
+                    showingLogViewer = true
+                }
+                .keyboardShortcut("L", modifiers: [.command, .shift])
             }
         }
     }

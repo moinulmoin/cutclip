@@ -17,6 +17,7 @@ CutClip is a macOS SwiftUI application for clipping YouTube videos with a freemi
 - **[Build Commands](agent-docs/BUILD_COMMANDS.md)** - Development, release, and troubleshooting commands
 - **[Architecture](agent-docs/ARCHITECTURE.md)** - Service architecture and design patterns
 - **[API Reference](agent-docs/API_REFERENCE.md)** - Backend API endpoints and integration
+- **[Scripts](scripts/)** - Scripts for development, release, and troubleshooting
 
 ## Key Features
 

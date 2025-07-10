@@ -29,12 +29,17 @@ class ErrorPresenter: ObservableObject {
     ) {
         // If an alert is already showing, don't override it immediately
         guard !showingAlert && !showingInitSheet else {
-            print("⚠️ ErrorPresenter.present - alert already showing, ignoring new error: \(error.errorTitle)")
+            LoggingService.shared.info("Alert already showing, ignoring new error: \(error.errorTitle)", category: "ui")
             return
         }
         
         alertID = UUID()
-        print("🚨 ErrorPresenter.present - alertID: \(alertID), error: \(error.errorTitle), isInitialization: \(isInitialization), isRetryable: \(error.isRetryable)")
+        
+        // Log the error to file
+        LoggingService.shared.error(
+            "Error presented - alertID: \(alertID), title: \(error.errorTitle), description: \(error.errorDescription ?? ""), isInitialization: \(isInitialization), isRetryable: \(error.isRetryable)",
+            category: "error"
+        )
         
         self.currentError = error
         self.retryAction = retryAction

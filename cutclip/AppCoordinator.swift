@@ -46,6 +46,10 @@ final class AppCoordinator: ObservableObject {
         networkMonitor: NetworkMonitor? = nil,
         cacheService: VideoCacheService? = nil
     ) {
+        // Initialize logging first
+        _ = LoggingService.shared
+        LoggingService.shared.info("CutClip starting - Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown")", category: "app")
+        
         // Use provided instances or create new ones
         self.binaryManager = binaryManager ?? BinaryManager()
         self.errorHandler = errorHandler ?? ErrorHandler()

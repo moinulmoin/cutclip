@@ -72,7 +72,42 @@ class DownloadService: ObservableObject, Sendable {
         guard isValidYouTubeURL(job.url) else {
             throw DownloadError.invalidURL
         }
-
+        
+        // Try download with retry logic for fragment errors
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                if attempt > 1 {
+                    print("🔄 Retry attempt \(attempt) for download...")
+                    // Wait a bit before retry to let CDN tokens refresh
+                    try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                }
+                
+                return try await performDownload(job: job, ytDlpPath: ytDlpPath, ffmpegPath: ffmpegPath, attempt: attempt)
+            } catch let error as DownloadError {
+                lastError = error
+                
+                // Check if it's a fragment error that we should retry
+                if case .downloadFailed(let message) = error,
+                   (message.contains("fragment") && message.contains("403")) ||
+                   (message.contains("100%") && message.contains("ERROR")) {
+                    print("⚠️ Fragment error detected, will retry if attempts remain...")
+                    continue
+                }
+                
+                // For other errors, don't retry
+                throw error
+            } catch {
+                lastError = error
+                throw error
+            }
+        }
+        
+        // If we get here, all retries failed
+        throw lastError ?? DownloadError.downloadFailed("Download failed after multiple attempts")
+    }
+    
+    private nonisolated func performDownload(job: ClipJob, ytDlpPath: String, ffmpegPath: String, attempt: Int) async throws -> String {
         // Create temporary directory for downloads
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("CutClip")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -85,16 +120,24 @@ class DownloadService: ObservableObject, Sendable {
         // Build yt-dlp format expression from desired quality
         let formatString: String
         if job.quality.lowercased() == "best" {
-            formatString = "bestvideo+bestaudio/best"
+            formatString = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
         } else if let h = Int(job.quality.lowercased().replacingOccurrences(of: "p", with: "")) {
-            formatString = "bestvideo[height<=\(h)]+bestaudio[ext=m4a]/bestvideo[height<=\(h)]+bestaudio/best[height<=\(h)]/best"
+            // On retry attempts, use simpler format to avoid fragment issues
+            if attempt > 1 {
+                // Use pre-merged formats to avoid separate download and merge
+                formatString = "best[height<=\(h)]/bestvideo[height<=\(h)]+bestaudio/best"
+            } else {
+                // Prefer mp4 video with m4a audio for better compatibility
+                formatString = "bestvideo[height<=\(h)][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=\(h)]+bestaudio[ext=m4a]/bestvideo[height<=\(h)]+bestaudio/best[height<=\(h)]/best"
+            }
         } else {
-            formatString = "bestvideo[height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
+            formatString = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
         }
         
-        print("🎬 yt-dlp format string: \(formatString)")
-        print("🎬 Quality requested: \(job.quality)")
-        print("🎬 URL: \(job.url)")
+        LoggingService.shared.info("yt-dlp format string: \(formatString)", category: "download")
+        LoggingService.shared.info("Quality requested: \(job.quality)", category: "download")
+        LoggingService.shared.info("URL: \(job.url)", category: "download")
+        LoggingService.shared.info("Attempt: \(attempt)", category: "download")
         
         // User agents for rotation
         let userAgents = [
@@ -106,32 +149,51 @@ class DownloadService: ObservableObject, Sendable {
         ]
         let randomUserAgent = userAgents.randomElement() ?? userAgents[0]
         
-        let ffmpegDir = URL(fileURLWithPath: ffmpegPath).deletingLastPathComponent().path
+        var arguments = [
+            "--format", formatString,
+            "--ffmpeg-location", ffmpegPath,  // Pass the full ffmpeg binary path
+            "--output", outputTemplate,
+            "--no-playlist",
+            "--newline",  // Output progress on new lines
+            "--progress",  // Show progress
+            // Fix for fragment errors - keep everything in memory
+            "--keep-fragments",  // Keep downloaded fragments on disk
+            "--no-part",  // Don't use .part files
+            "--concurrent-fragments", "4",  // Download fragments concurrently
+            // Safety parameters to avoid YouTube detection
+            "--sleep-interval", "3",  // Sleep 3-8 seconds between playlist items
+            "--max-sleep-interval", "8",
+            "--user-agent", randomUserAgent,  // Randomize user agent
+            "--referer", "https://www.youtube.com/",  // Add referer header
+            "--quiet",  // Less verbose to reduce detection
+            "--no-warnings"  // Suppress warnings
+        ]
+        
+        // On retry attempts, add more aggressive options
+        if attempt > 1 {
+            arguments.append(contentsOf: [
+                "--retries", "10",  // More retries for fragments
+                "--fragment-retries", "10",  // Retry failed fragments
+                "--retry-sleep", "3"  // Sleep between retries
+            ])
+        }
+        
+        arguments.append(job.url)
         
         let config = ProcessConfiguration(
             executablePath: ytDlpPath,
-            arguments: [
-                "--format", formatString,
-                "--ffmpeg-location", ffmpegDir,  // Tell yt-dlp where FFmpeg directory is
-                "--output", outputTemplate,
-                "--no-playlist",
-                "--newline",  // Output progress on new lines
-                "--progress",  // Show progress
-                // Safety parameters to avoid YouTube detection
-                "--sleep-interval", "3",  // Sleep 3-8 seconds between playlist items
-                "--max-sleep-interval", "8",
-                "--user-agent", randomUserAgent,  // Randomize user agent
-                "--referer", "https://www.youtube.com/",  // Add referer header
-                "--quiet",  // Less verbose to reduce detection
-                "--no-warnings",  // Suppress warnings
-                job.url
-            ],
+            arguments: arguments,
             environment: [
                 "PATH": "/usr/bin:/bin",
                 "HOME": NSTemporaryDirectory()
             ],
             timeout: 900, // 15 minutes
             outputHandler: { [weak self] output in
+                // Enhanced debug logging for merge issues
+                if output.contains("Merger") || output.contains("ffmpeg") || output.contains("fragment") || output.contains("ERROR") {
+                    LoggingService.shared.error("yt-dlp critical output: \(output)", category: "download")
+                }
+                
                 // Parse progress from yt-dlp output
                 if let progress = parseProgress(from: output) {
                     Task { @MainActor in
@@ -179,8 +241,15 @@ class DownloadService: ObservableObject, Sendable {
                 }
             } else {
                 let errorOutput = result.errorString ?? result.outputString ?? "Unknown error"
-                print("❌ yt-dlp failed with exit code: \(result.exitCode)")
-                print("❌ yt-dlp error output: \(errorOutput)")
+                LoggingService.shared.error("yt-dlp failed with exit code: \(result.exitCode)", category: "download")
+                LoggingService.shared.error("yt-dlp error output: \(errorOutput)", category: "download")
+                
+                // Additional debug info for merge failures
+                if errorOutput.contains("fragment") || errorOutput.contains("merg") || errorOutput.contains("ffmpeg") {
+                    LoggingService.shared.debug("Potential merge issue detected", category: "download")
+                    LoggingService.shared.debug("Full error for analysis: \(errorOutput)", category: "download")
+                }
+                
                 throw DownloadError.downloadFailed(errorOutput)
             }
         } catch let error as ProcessExecutorError {
@@ -203,11 +272,13 @@ class DownloadService: ObservableObject, Sendable {
                 startTime: job.startTime,
                 endTime: job.endTime,
                 aspectRatio: job.aspectRatio,
+                quality: job.quality,
                 status: job.status,
                 progress: progress / 100.0,
                 downloadedFilePath: job.downloadedFilePath,
                 outputFilePath: job.outputFilePath,
-                errorMessage: job.errorMessage
+                errorMessage: job.errorMessage,
+                videoInfo: job.videoInfo
             )
             currentJob = updatedJob
         }
@@ -266,13 +337,22 @@ private nonisolated func parseYtDlpError(_ error: String) -> String {
     
     // Consolidated fragment error handling
     else if error.contains("fragment") && error.contains("not found") {
-        if error.contains("100%") {
-            return "Video and audio downloaded successfully but merging failed. This usually means FFmpeg couldn't process the files. Please try again or use a different quality setting."
+        // Special case: When we see 100% download but fragment error, it's a CDN token expiry
+        if error.contains("100%") || (error.contains("100.0%") && error.contains("HTTP Error 403")) {
+            return "Download completed but YouTube's access tokens expired. This is a temporary issue - please try again in a few seconds."
         } else if error.contains("HTTP Error 403") {
-            return "The download was interrupted during processing. This often happens when YouTube's servers timeout. Please try downloading again with a smaller quality setting or shorter clip duration."
+            return "YouTube's server rejected the download request. This often happens with high-quality videos. Try using 720p or wait a few minutes before retrying."
         } else {
-            return "The video stream was interrupted during processing. This typically happens when YouTube's CDN tokens expire. Please try downloading again with a lower quality setting."
+            return "The video stream was interrupted. Please try again with a lower quality setting (720p recommended)."
         }
+    }
+    
+    // More specific merge error detection
+    else if error.contains("[Merger]") && error.contains("ERROR") {
+        return "Failed to merge video and audio streams. The downloaded files may be corrupted or incompatible. Please try again with a different quality setting."
+    }
+    else if error.contains("ffmpeg") && error.contains("Conversion failed") {
+        return "FFmpeg failed to process the video. This may be due to an unsupported video format or codec. Please try a different video or quality setting."
     }
     
     // FFmpeg not found or merge failures

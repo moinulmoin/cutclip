@@ -135,6 +135,7 @@ build-release.sh
 DISTRIBUTION_GUIDE.md
 CLAUDE.local.md
 agent-docs/
+scripts/
 
 # Sparkle
 sparkle/
@@ -142,3 +143,4 @@ releases/
 appcast.xml
 *.delta
 dsa_pub.pem
+sparkle_private_key.pem
